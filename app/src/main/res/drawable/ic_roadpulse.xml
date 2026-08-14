@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+
+    <!-- Background disc: teal to indigo gradient -->
+    <path android:pathData="M24,0A24,24 0,1 0,24 48A24,24 0,1 0,24 0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="2"
+                android:startY="2"
+                android:endX="46"
+                android:endY="46"
+                android:startColor="#2DD4BF"
+                android:endColor="#312E81" />
+        </aapt:attr>
+    </path>
+
+    <!-- Soft inner glow -->
+    <path
+        android:fillColor="#22FFFFFF"
+        android:pathData="M24,2A22,22 0,0 1,46 24A22,10 0,0 0,24 12A22,10 0,0 0,2 24A22,22 0,0 1,24 2Z" />
+
+    <!-- Route path leading to the pin -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#66FFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:pathData="M9,34C13,29 16,29 19,32" />
+
+    <!-- Map pin glyph -->
+    <group
+        android:translateX="4.8"
+        android:translateY="4.8"
+        android:scaleX="1.6"
+        android:scaleY="1.6">
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M12,2C8.13,2 5,5.13 5,9c0,5.25 7,13 7,13s7,-7.75 7,-13C19,5.13 15.87,2 12,2zM12,11.5c-1.38,0 -2.5,-1.12 -2.5,-2.5s1.12,-2.5 2.5,-2.5 2.5,1.12 2.5,2.5 -1.12,2.5 -2.5,2.5z" />
+    </group>
+
+    <!-- Location ping accent -->
+    <path
+        android:fillColor="#FFB020"
+        android:pathData="M35.5,33.5m-3.5,0a3.5,3.5 0,1 1,7 0a3.5,3.5 0,1 1,-7 0" />
+</vector>

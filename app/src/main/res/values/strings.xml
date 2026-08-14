@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">My Maps</string>
+
+    <!-- activity_navigation.xml -->
+    <string name="recommended_lanes_content_description">Recommended lanes</string>
+    <string name="speed_compliance_content_description">Current speed and speed limit</string>
+    <string name="road_ahead_eyebrow">ROAD AHEAD</string>
+    <string name="road_ahead_meta_default">ROUTE MATCHED</string>
+    <string name="road_ahead_primary_default">Building your route-ahead view…</string>
+    <string name="stop_navigation_button">Stop</string>
+</resources>
+

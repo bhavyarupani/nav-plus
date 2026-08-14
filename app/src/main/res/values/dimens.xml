@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools" tools:ignore="UnusedResources">
+    <!--
+      RoadPulse design tokens — spacing, radii, elevation, and touch targets.
+      See docs/DESIGN_SYSTEM.md. Every token in this file is a forward-declared foundation for
+      the upcoming mobile-journey and marker-redesign work, not dead code — the whole-file
+      UnusedResources suppression above is scoped to this dedicated tokens file for exactly that
+      reason, not applied to silence a real unused-code signal elsewhere.
+    -->
+
+    <!-- Spacing scale -->
+    <dimen name="rp_space_xxs">4dp</dimen>
+    <dimen name="rp_space_xs">8dp</dimen>
+    <dimen name="rp_space_sm">12dp</dimen>
+    <dimen name="rp_space_md">16dp</dimen>
+    <dimen name="rp_space_lg">24dp</dimen>
+    <dimen name="rp_space_xl">32dp</dimen>
+
+    <!-- Corner radii -->
+    <dimen name="rp_radius_sm">8dp</dimen>
+    <dimen name="rp_radius_md">16dp</dimen>
+    <dimen name="rp_radius_lg">24dp</dimen>
+
+    <!-- Elevation -->
+    <dimen name="rp_elevation_panel">12dp</dimen>
+    <dimen name="rp_elevation_raised">14dp</dimen>
+
+    <!-- Touch targets — 48dp is Android's documented accessibility minimum -->
+    <dimen name="rp_touch_target_min">48dp</dimen>
+
+    <!-- Icon sizes -->
+    <dimen name="rp_icon_sm">16dp</dimen>
+    <dimen name="rp_icon_md">24dp</dimen>
+    <dimen name="rp_icon_lg">32dp</dimen>
+
+    <!-- Map route rendering (data-driven width bands referenced from RoadPulseMapTheme) -->
+    <dimen name="rp_route_width_primary">10dp</dimen>
+    <dimen name="rp_route_width_casing">16dp</dimen>
+    <dimen name="rp_route_width_alternative">6dp</dimen>
+</resources>

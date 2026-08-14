@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<lint>
+    <!-- Gradle 9.1 is the version required by the pinned, stable AGP 9.0.1 toolchain. -->
+    <issue id="AndroidGradlePluginVersion" severity="ignore" />
+</lint>
