@@ -50,6 +50,14 @@
             android:name=".SettingsActivity"
             android:exported="false" />
 
+        <!-- Free-stack migration proof of concept, see ZERO_COST_ARCHITECTURE.md. Not reachable
+             from any app screen. Non-exported: on this retail device, launching it via
+             `adb shell am start` needs a temporary exported="true" edit (revert after use) since
+             shell can't start a non-exported activity here - do not leave it exported. -->
+        <activity
+            android:name=".engine.MapLibrePocActivity"
+            android:exported="false" />
+
         <service
             android:name=".car.RoadPulseCarAppService"
             android:exported="true"
