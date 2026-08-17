@@ -86,22 +86,6 @@
       "source": "roadpulse",
       "source-layer": "boundary",
       "paint": { "line-color": "#475569", "line-width": 1, "line-dasharray": [2, 2] }
-    },
-    {
-      "id": "water-name",
-      "type": "symbol",
-      "source": "roadpulse",
-      "source-layer": "water_name",
-      "layout": { "text-field": ["get", "name"], "text-size": 11 },
-      "paint": { "text-color": "#7DB8E8" }
-    },
-    {
-      "id": "place-labels",
-      "type": "symbol",
-      "source": "roadpulse",
-      "source-layer": "place",
-      "layout": { "text-field": ["get", "name"], "text-size": 13 },
-      "paint": { "text-color": "#F5F7FA", "text-halo-color": "#0B1220", "text-halo-width": 1.2 }
     }
   ]
 }

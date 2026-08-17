@@ -104,20 +104,22 @@ Following the specified 15-step sequence. Completed so far:
   cleartext HTTP by default even to loopback, requiring an explicit, narrowly-scoped
   `network_security_config.xml` permitting cleartext to `127.0.0.1` only.
 
-**Found, diagnosed with evidence, not yet resolved:** the tiles that actually cover the visible
-Bremen viewport at the map's zoom level are requested by MapLibre and then cancelled milliseconds
-later ("no longer needed for the map to render"), so nothing but the background color paints on
-screen. This was diagnosed as a MapLibre-native client-side decision, not a server problem —
-confirmed by instrumenting the server to log read timing: it was reading and answering the exact
-tile coordinates MapLibre later reported as cancelled, in 1–4ms, before the cancellation was even
-logged. Tried and ruled out: HTTP keep-alive vs. one-connection-per-tile, an explicit `bounds`
-field on the source, setting the camera before vs. after style load, a delayed camera nudge to
-force re-evaluation, and disabling MapLibre's tile prefetch (`setPrefetchesTiles(false)`) entirely
-— none changed the outcome. Next things worth trying: MapLibre's own `OfflineManager`/
-`OfflineRegion` API (a first-class, better-tested code path than a hand-rolled local server) as
-the tile-serving mechanism instead, or a minimal upstream repro issue against maplibre-native.
+**Resolved.** The tile-cancellation issue above was root-caused: the style's two `symbol` layers
+(`water-name`, `place-labels`) used `text-field` with no `glyphs` URL defined anywhere in the
+style. Removing those two layers immediately fixed rendering - real roads, water, landcover, and
+motorways now paint correctly on screen, confirmed on the physical Pixel 6 Pro (Bremen's actual
+road network and the Weser river are visibly correct). The apparent mechanism: MapLibre appears
+to process a style's layers as a single pipeline per tile, and a symbol layer that can't resolve
+its glyphs dependency stalls that pipeline for the whole tile, not just the symbol layer - which
+surfaced as every layer's tiles getting silently cancelled, not an error tied to the text layers
+specifically. This cost a large amount of debugging time before being found; the lesson for next
+time is to bisect the style (delete layers by half) before chasing server/network/timing theories.
+
+Labels are deferred, not abandoned: reintroducing them needs a real `glyphs` PBF source, which
+under the zero-cost constraint means generating font glyph ranges locally (there are open-source
+tools for this) rather than pointing at any hosted glyphs service - tracked as follow-up work, not
+blocking the rest of the migration.
 
 **Not started:** the routing pipeline (GraphHopper graph generation and on-device integration),
-the offline search index, day/night MapLibre styles, and wiring any of this into the app's actual
-screens in place of Google Maps/Navigation SDK. The working Google implementation on `main` is
-untouched throughout.
+the offline search index, and wiring any of this into the app's actual screens in place of Google
+Maps/Navigation SDK. The working Google implementation on `main` is untouched throughout.
