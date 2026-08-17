@@ -99,11 +99,14 @@ class GraphHopperGuidanceEngine(
 
         val stepIndex = currentStepIndex(projection.alongMeters)
         val hasArrived = remainingMeters <= ARRIVAL_THRESHOLD_METERS
+        val nextManeuverAtMeters = stepStartMeters.getOrNull(stepIndex + 1) ?: totalMeters
+        val distanceToNextManeuverMeters = (nextManeuverAtMeters - projection.alongMeters).coerceAtLeast(0.0)
 
         val state =
             GuidanceState(
                 currentStep = route.steps.getOrNull(stepIndex),
                 nextStep = route.steps.getOrNull(stepIndex + 1),
+                distanceToNextManeuverMeters = distanceToNextManeuverMeters.roundToInt(),
                 distanceToDestinationMeters = remainingMeters.roundToInt(),
                 etaEpochSeconds = etaEpochSeconds,
                 isRerouting = isRerouting,

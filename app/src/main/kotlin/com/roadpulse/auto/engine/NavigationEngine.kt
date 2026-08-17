@@ -79,6 +79,10 @@ data class ManeuverStep(
 data class GuidanceState(
     val currentStep: ManeuverStep?,
     val nextStep: ManeuverStep?,
+    /** Live countdown to where [currentStep] ends and its maneuver happens - distinct from
+     * [ManeuverStep.distanceMeters], which is that step's fixed total segment length and does not
+     * decrease while driving. Voice-prompt distance thresholds must use this field, not that one. */
+    val distanceToNextManeuverMeters: Int?,
     val distanceToDestinationMeters: Int?,
     val etaEpochSeconds: Long?,
     val isRerouting: Boolean,
