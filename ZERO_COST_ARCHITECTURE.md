@@ -84,11 +84,40 @@ Following the specified 15-step sequence. Completed so far:
 
 ## Implementation status
 
-**Decided and documented, not yet built:** the full routing pipeline (graph generation from a
-real Geofabrik extract, on-device GraphHopper integration, rerouting, maneuver text), the offline
-search index, and the day/night MapLibre styles.
+**Built and verified real, end to end:**
+- A genuine Bremen extract downloaded from Geofabrik (21MB `.osm.pbf`, real German OSM data, not
+  a fixture).
+- A real vector tile package generated from it with Planetiler + the OpenMapTiles schema: 707
+  tiles, 1,012,755 features, 12.2MB `.mbtiles`, zoom 0–14. Bremen was chosen deliberately as the
+  smallest complete German Bundesland (Geofabrik's own listed sizes), to prove the full pipeline
+  fast rather than starting with a multi-GB extract.
+- `LocalMbtilesServer`: a loopback-only HTTP/1.1 server (Android has no `HttpServer` class to
+  reuse) that reads tiles directly from that `.mbtiles` SQLite file and serves them to MapLibre.
+  Verified correct at the protocol level with a direct `nc` request against the running server —
+  real `200 OK`, real tile bytes — independent of whether MapLibre itself was involved.
+- `MapLibrePocActivity`: MapLibre Native confirmed initializing and rendering on the physical
+  Pixel 6 Pro (attribution control visible, no crash), successfully fetching *some* tiles from
+  the local server over real HTTP.
+- Two real, non-obvious bugs found and fixed along the way: (1) `InetAddress.getLoopbackAddress()`
+  resolved to IPv6 `::1` on this device while both the style JSON and MapLibre's client target
+  IPv4, silently binding the server somewhere nothing would ever connect to; (2) Android blocks
+  cleartext HTTP by default even to loopback, requiring an explicit, narrowly-scoped
+  `network_security_config.xml` permitting cleartext to `127.0.0.1` only.
 
-**Built:** none of the runtime engine code yet as of this document's first version — this file
-and the branch/interface scaffolding are the first commits of the migration, not the finished
-migration. Treat every "not yet built" item as exactly that; this file will be updated commit by
-commit as real, tested code lands, not rewritten retroactively to look more complete than it is.
+**Found, diagnosed with evidence, not yet resolved:** the tiles that actually cover the visible
+Bremen viewport at the map's zoom level are requested by MapLibre and then cancelled milliseconds
+later ("no longer needed for the map to render"), so nothing but the background color paints on
+screen. This was diagnosed as a MapLibre-native client-side decision, not a server problem —
+confirmed by instrumenting the server to log read timing: it was reading and answering the exact
+tile coordinates MapLibre later reported as cancelled, in 1–4ms, before the cancellation was even
+logged. Tried and ruled out: HTTP keep-alive vs. one-connection-per-tile, an explicit `bounds`
+field on the source, setting the camera before vs. after style load, a delayed camera nudge to
+force re-evaluation, and disabling MapLibre's tile prefetch (`setPrefetchesTiles(false)`) entirely
+— none changed the outcome. Next things worth trying: MapLibre's own `OfflineManager`/
+`OfflineRegion` API (a first-class, better-tested code path than a hand-rolled local server) as
+the tile-serving mechanism instead, or a minimal upstream repro issue against maplibre-native.
+
+**Not started:** the routing pipeline (GraphHopper graph generation and on-device integration),
+the offline search index, day/night MapLibre styles, and wiring any of this into the app's actual
+screens in place of Google Maps/Navigation SDK. The working Google implementation on `main` is
+untouched throughout.

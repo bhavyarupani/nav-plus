@@ -6,3 +6,10 @@ local.properties
 *.iml
 .DS_Store
 
+# Free-stack map-tile build tooling: planetiler.jar, raw Geofabrik extracts, and generated
+# intermediate tile packages are large, regeneratable build artifacts, not source - see
+# ZERO_COST_ARCHITECTURE.md for how to regenerate them. Only the final package actually bundled
+# into the app (app/src/main/assets/*.mbtiles) is tracked.
+tools/planetiler/
+tools/data/
+
