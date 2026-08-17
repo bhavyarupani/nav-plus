@@ -70,6 +70,10 @@ dependencies {
     // app screen yet; added here to verify it resolves and builds against this project's actual
     // AGP/Kotlin/compileSdk versions before further migration work depends on it.
     implementation("org.maplibre.gl:android-sdk:11.11.0")
+    // Symbol/line annotation managers (SymbolManager/LineManager) - the closest MapLibre
+    // equivalent to GoogleMap's addMarker/addPolyline, used by MapLibreMapController to replace
+    // those call sites across MainActivity/NavigationActivity/RoadPulseNavigationScreen.
+    implementation("org.maplibre.gl:android-plugin-annotation-v9:3.0.2")
     // Pinned to 7.0, not the latest 10.x: from 8.x onward GraphHopper's routing weighting is
     // computed via CustomModel expressions compiled at runtime with Janino, which doesn't work
     // on Android's ART/DEX runtime (confirmed via a real on-device NoSuchMethodError - this is a
