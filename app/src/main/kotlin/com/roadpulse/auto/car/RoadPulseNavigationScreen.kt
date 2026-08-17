@@ -29,6 +29,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.google.android.gms.maps.CameraUpdateFactory
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.GoogleMap.CameraPerspective
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.LatLngBounds
 import com.google.android.gms.maps.model.Marker
@@ -467,11 +468,16 @@ class RoadPulseNavigationScreen(
         val selected = SelectedDestinationStore(carContext).load() ?: return
         val waypoint =
             runCatching {
-                Waypoint
-                    .builder()
-                    .setPlaceIdString(selected.placeId)
-                    .setTitle(selected.title)
-                    .build()
+                val builder = Waypoint.builder().setTitle(selected.title)
+                // Prefer coordinates (always present for offline-search-sourced destinations,
+                // which have no Google place ID) - only Google-Places-sourced destinations from
+                // before the free-stack search migration would lack them.
+                if (selected.latitude != null && selected.longitude != null) {
+                    builder.setLatLng(selected.latitude, selected.longitude)
+                } else {
+                    builder.setPlaceIdString(selected.placeId)
+                }
+                builder.build()
             }.getOrElse {
                 updateStatus("Route unavailable", "This place cannot be used for driving guidance.")
                 return
@@ -790,7 +796,7 @@ class RoadPulseNavigationScreen(
                         .position(LatLng(start.latitude, start.longitude))
                         .title("${event.type.displayName} starts")
                         .snippet(eventOverlayDetail(event))
-                        .icon(mapMarkerIcons.trafficEvent(event.type, "S")),
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.trafficEvent(event.type, "S").second)),
                 )?.let(trafficMarkers::add)
             if (start != end) {
                 map
@@ -799,7 +805,7 @@ class RoadPulseNavigationScreen(
                             .position(LatLng(end.latitude, end.longitude))
                             .title("${event.type.displayName} ends")
                             .snippet(eventOverlayDetail(event))
-                            .icon(mapMarkerIcons.trafficEvent(event.type, "E")),
+                            .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.trafficEvent(event.type, "E").second)),
                     )?.let(trafficMarkers::add)
                 map
                     .addPolyline(
@@ -836,7 +842,7 @@ class RoadPulseNavigationScreen(
                         .position(LatLng(point.coordinate.latitude, point.coordinate.longitude))
                         .title(point.title)
                         .snippet(point.detail)
-                        .icon(mapMarkerIcons.infrastructure(point))
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.infrastructure(point).second))
                         .anchor(.5f, .5f),
                 )?.let(trafficMarkers::add)
         }
@@ -851,7 +857,7 @@ class RoadPulseNavigationScreen(
                             ),
                         ).title(facility.title)
                         .snippet(facilityOverlayDetail(facility))
-                        .icon(mapMarkerIcons.facility(facility))
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.facility(facility).second))
                         .anchor(.5f, .5f),
                 )?.let(trafficMarkers::add)
         }
@@ -862,7 +868,7 @@ class RoadPulseNavigationScreen(
                         .position(LatLng(warning.coordinate.latitude, warning.coordinate.longitude))
                         .title(warning.event)
                         .snippet(warning.headline.ifBlank { warning.severity })
-                        .icon(mapMarkerIcons.weatherWarning())
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.weatherWarning().second))
                         .anchor(.5f, .5f),
                 )?.let(trafficMarkers::add)
         }
@@ -881,7 +887,7 @@ class RoadPulseNavigationScreen(
                             ),
                         ).title("Road surface: ${forecast.condition.displayName}")
                         .snippet("DWD forecast$temperature")
-                        .icon(mapMarkerIcons.roadWeather(forecast.condition))
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.roadWeather(forecast.condition).second))
                         .anchor(.5f, .5f),
                 )?.let(trafficMarkers::add)
         }
@@ -905,7 +911,7 @@ class RoadPulseNavigationScreen(
                         .position(LatLng(point.coordinate.latitude, point.coordinate.longitude))
                         .title(point.title)
                         .snippet("On your route · ${sign.compactText()}")
-                        .icon(mapMarkerIcons.infrastructure(point))
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.infrastructure(point).second))
                         .anchor(.5f, .5f)
                         .zIndex(8f),
                 )?.let(routeRoadFeatureMarkers::add)
@@ -953,7 +959,7 @@ class RoadPulseNavigationScreen(
                         .position(LatLng(camera.latitude, camera.longitude))
                         .title(upcomingCamera.compactText())
                         .snippet(upcomingCamera.camera.sources.joinToString(" + ") { it.displayName })
-                        .icon(mapMarkerIcons.camera(camera.type, camera.speedLimitKph))
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.camera(camera.type, camera.speedLimitKph).second))
                         .anchor(.5f, .5f)
                         .zIndex(9f),
                 )?.let(routeCameraMarkers::add)

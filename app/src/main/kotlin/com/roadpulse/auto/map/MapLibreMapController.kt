@@ -129,6 +129,10 @@ class MapLibreMapController(
         map.animateCamera(CameraUpdateFactory.newLatLngZoom(coordinate.toLatLng(), zoom))
     }
 
+    fun currentZoom(): Double = map.cameraPosition.zoom
+
+    fun cameraTarget(): RoadCoordinate? = map.cameraPosition.target?.toRoadCoordinate()
+
     fun moveCameraTo(
         coordinate: RoadCoordinate,
         zoom: Double,

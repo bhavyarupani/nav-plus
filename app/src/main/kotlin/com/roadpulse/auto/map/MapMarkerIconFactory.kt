@@ -9,8 +9,6 @@ import android.graphics.Path
 import android.graphics.RectF
 import android.graphics.Typeface
 import androidx.core.graphics.createBitmap
-import com.google.android.gms.maps.model.BitmapDescriptor
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.roadpulse.auto.alerts.OpenGatsoPoiType
 import com.roadpulse.auto.traffic.RestroomFeeStatus
 import com.roadpulse.auto.traffic.RoadFacility
@@ -23,17 +21,25 @@ import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
 
-/** High-contrast, code-drawn map symbols shared by the phone and Android Auto surfaces. */
+/**
+ * High-contrast, code-drawn map symbols shared by the phone and Android Auto surfaces.
+ *
+ * Returns `(iconId, Bitmap)` rather than a renderer-specific type: [MapLibreMapController]
+ * callers register the bitmap once via `registerIcon(iconId, bitmap)` and reuse the id for every
+ * marker; Google `GoogleMap` callers (still `NavigationActivity`/`RoadPulseNavigationScreen`,
+ * pending their own free-stack migration) wrap the bitmap with `BitmapDescriptorFactory.fromBitmap`
+ * at the call site instead - no Google Maps SDK type appears in this file.
+ */
 class MapMarkerIconFactory(
     context: Context,
 ) {
     private val density = context.resources.displayMetrics.density
-    private val cache = mutableMapOf<String, BitmapDescriptor>()
+    private val cache = mutableMapOf<String, Bitmap>()
 
     fun camera(
         type: OpenGatsoPoiType,
         speedLimitKph: Int?,
-    ): BitmapDescriptor =
+    ): Pair<String, Bitmap> =
         icon(
             "camera:$type:$speedLimitKph",
         ) { canvas ->
@@ -51,7 +57,7 @@ class MapMarkerIconFactory(
             }
         }
 
-    fun infrastructure(point: RoadInfrastructurePoint): BitmapDescriptor =
+    fun infrastructure(point: RoadInfrastructurePoint): Pair<String, Bitmap> =
         icon(
             "infrastructure:${point.type}:${point.title}",
         ) { canvas ->
@@ -97,7 +103,7 @@ class MapMarkerIconFactory(
     fun trafficEvent(
         type: TrafficEventType,
         boundary: String,
-    ): BitmapDescriptor =
+    ): Pair<String, Bitmap> =
         icon(
             "traffic:$type:$boundary",
         ) { canvas ->
@@ -110,7 +116,7 @@ class MapMarkerIconFactory(
             drawBoundaryBadge(canvas, boundary)
         }
 
-    fun facility(facility: RoadFacility): BitmapDescriptor =
+    fun facility(facility: RoadFacility): Pair<String, Bitmap> =
         icon(
             "facility:${facility.type}:${facility.restroomFeeStatus}",
         ) { canvas ->
@@ -122,12 +128,12 @@ class MapMarkerIconFactory(
             }
         }
 
-    fun weatherWarning(): BitmapDescriptor =
+    fun weatherWarning(): Pair<String, Bitmap> =
         icon("weather:warning") { canvas ->
             drawWarningTriangle(canvas, Symbol.LIGHTNING)
         }
 
-    fun roadWeather(condition: RoadSurfaceCondition): BitmapDescriptor =
+    fun roadWeather(condition: RoadSurfaceCondition): Pair<String, Bitmap> =
         icon(
             "weather:$condition",
         ) { canvas ->
@@ -146,16 +152,17 @@ class MapMarkerIconFactory(
     private fun icon(
         key: String,
         draw: (Canvas) -> Unit,
-    ): BitmapDescriptor =
-        cache.getOrPut(key) {
-            val size = (BASE_SIZE * density).roundToInt().coerceAtLeast(BASE_SIZE.toInt())
-            val bitmap = createBitmap(size, size, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            canvas.scale(size / BASE_SIZE, size / BASE_SIZE)
-            drawHalo(canvas)
-            draw(canvas)
-            BitmapDescriptorFactory.fromBitmap(bitmap)
-        }
+    ): Pair<String, Bitmap> =
+        key to
+            cache.getOrPut(key) {
+                val size = (BASE_SIZE * density).roundToInt().coerceAtLeast(BASE_SIZE.toInt())
+                val bitmap = createBitmap(size, size, Bitmap.Config.ARGB_8888)
+                val canvas = Canvas(bitmap)
+                canvas.scale(size / BASE_SIZE, size / BASE_SIZE)
+                drawHalo(canvas)
+                draw(canvas)
+                bitmap
+            }
 
     private fun drawHalo(canvas: Canvas) {
         paint(Paint.Style.FILL, Color.argb(190, 7, 18, 28)).also {

@@ -2,7 +2,6 @@ package com.roadpulse.auto
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -19,38 +18,25 @@ import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Looper
+import android.text.Editable
 import android.text.TextUtils
+import android.text.TextWatcher
 import android.text.format.DateUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.widget.ArrayAdapter
 import android.widget.Button
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.TextView
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.createBitmap
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.FragmentActivity
-import com.google.android.gms.maps.CameraUpdateFactory
-import com.google.android.gms.maps.GoogleMap
-import com.google.android.gms.maps.model.BitmapDescriptor
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.LatLngBounds
-import com.google.android.gms.maps.model.Marker
-import com.google.android.gms.maps.model.MarkerOptions
-import com.google.android.gms.maps.model.Polyline
-import com.google.android.gms.maps.model.PolylineOptions
-import com.google.android.libraries.navigation.SupportNavigationFragment
-import com.google.android.libraries.places.api.Places
-import com.google.android.libraries.places.api.model.AutocompleteSessionToken
-import com.google.android.libraries.places.api.model.Place
-import com.google.android.libraries.places.api.net.FetchPlaceRequest
-import com.google.android.libraries.places.widget.PlaceAutocomplete
-import com.google.android.libraries.places.widget.PlaceAutocompleteActivity
 import com.roadpulse.auto.alerts.CameraDataRefreshCoordinator
 import com.roadpulse.auto.alerts.CameraDataRefreshScheduler
 import com.roadpulse.auto.alerts.CameraDataSource
@@ -58,18 +44,22 @@ import com.roadpulse.auto.alerts.NearbyOpenGatsoPoi
 import com.roadpulse.auto.alerts.OfficialCameraDataUpdater
 import com.roadpulse.auto.alerts.OfficialCameraRepository
 import com.roadpulse.auto.alerts.OpenGatsoDataUpdater
-import com.roadpulse.auto.alerts.OpenGatsoPoiType
 import com.roadpulse.auto.alerts.OpenGatsoRepository
 import com.roadpulse.auto.alerts.OpenStreetMapCameraRepository
 import com.roadpulse.auto.alerts.mergeCameraSources
 import com.roadpulse.auto.car.DrivingSessionState
 import com.roadpulse.auto.destination.SelectedDestination
 import com.roadpulse.auto.destination.SelectedDestinationStore
+import com.roadpulse.auto.engine.LocalMbtilesServer
+import com.roadpulse.auto.engine.OfflineSearchEngine
+import com.roadpulse.auto.engine.SearchResult
+import com.roadpulse.auto.map.MapLibreMapController
+import com.roadpulse.auto.map.MapMarker
 import com.roadpulse.auto.map.MapMarkerIconFactory
-import com.roadpulse.auto.map.RoadPulseMapTheme
+import com.roadpulse.auto.map.MapPolyline
+import com.roadpulse.auto.map.RoadPulseMapLibreStyle
 import com.roadpulse.auto.map.SpeedLimitRoadStyle
 import com.roadpulse.auto.quota.GoogleUsageGuard
-import com.roadpulse.auto.quota.QuotaDecision
 import com.roadpulse.auto.settings.DisplayFilterStore
 import com.roadpulse.auto.settings.DisplayLayer
 import com.roadpulse.auto.settings.DrivingContext
@@ -98,11 +88,25 @@ import com.roadpulse.auto.traffic.TrafficSnapshotStore
 import com.roadpulse.auto.traffic.WeatherWarning
 import com.roadpulse.auto.traffic.WeatherWarningResult
 import com.roadpulse.auto.traffic.displayName
+import org.maplibre.android.MapLibre
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
 import java.io.File
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
 
+/**
+ * Free-stack: MapLibre Native (rendering) + a local tile server over the bundled Bremen MBTiles
+ * package + OfflineSearchEngine (search) - replacing GoogleMap/SupportNavigationFragment/Google
+ * Places entirely. See ZERO_COST_ARCHITECTURE.md. All OSM/Autobahn/Tankerkoenig/OpenChargeMap
+ * data-layer logic below is unchanged from the Google-based version - only map rendering and
+ * search were Google-specific; everything else already ran on free data sources.
+ *
+ * Only the Bremen region is covered by the bundled tile/search packages at this point (see
+ * ZERO_COST_ARCHITECTURE.md's "Map-package strategy" for the plan to add more Bundesland
+ * packages) - the default map center below reflects that, not all of Germany.
+ */
 class MainActivity : FragmentActivity() {
     private lateinit var openGatsoUpdater: OpenGatsoDataUpdater
     private lateinit var openStreetMapCameraRepository: OpenStreetMapCameraRepository
@@ -129,14 +133,16 @@ class MainActivity : FragmentActivity() {
     private lateinit var routeStylePreferences: RouteStylePreferencesStore
     private lateinit var displayFilters: DisplayFilterStore
     private lateinit var roadSignFilters: RoadSignFilterStore
-    private var phoneMap: GoogleMap? = null
-    private var destinationMarker: Marker? = null
-    private val cameraMarkers = mutableListOf<Marker>()
-    private val cameraClusterPositions = mutableMapOf<Marker, LatLng>()
-    private val cameraIconCache = mutableMapOf<String, BitmapDescriptor>()
+    private lateinit var mapView: MapView
+    private var tileServer: LocalMbtilesServer? = null
+    private var mapController: MapLibreMapController? = null
+    private var destinationMarker: MapMarker? = null
+    private val cameraMarkers = mutableListOf<MapMarker>()
+    private val cameraClusterPositions = mutableMapOf<MapMarker, RoadCoordinate>()
     private val mapMarkerIcons by lazy { MapMarkerIconFactory(this) }
-    private val roadMarkers = mutableListOf<Marker>()
-    private val trafficPolylines = mutableListOf<Polyline>()
+    private val searchEngine by lazy { OfflineSearchEngine(this) }
+    private val roadMarkers = mutableListOf<MapMarker>()
+    private val trafficPolylines = mutableListOf<MapPolyline>()
     private var cameraSearchInProgress = false
     private var cameraLayerEnabled = true
     private var hasFramedCameraLayer = false
@@ -145,27 +151,7 @@ class MainActivity : FragmentActivity() {
     private var openGatsoRefreshInProgress = false
     private var roadSearchInProgress = false
     private var roadViewportQueryId = 0
-
-    private val placeAutocompleteLauncher =
-        registerForActivityResult(
-            ActivityResultContracts.StartActivityForResult(),
-        ) { result ->
-            val data = result.data
-            when {
-                result.resultCode == PlaceAutocompleteActivity.RESULT_OK && data != null -> {
-                    handlePlaceSelection(data)
-                }
-                result.resultCode == PlaceAutocompleteActivity.RESULT_ERROR && data != null -> {
-                    destinationStatus.text =
-                        "Search failed: " +
-                        (
-                            PlaceAutocomplete.getResultStatusFromIntent(data)?.statusMessage
-                                ?: "unknown error"
-                        )
-                }
-                result.resultCode == Activity.RESULT_CANCELED -> Unit
-            }
-        }
+    private var searchResults: List<SearchResult> = emptyList()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -191,14 +177,16 @@ class MainActivity : FragmentActivity() {
         cameraLayerEnabled = displayFilters.isEnabled(DrivingContext.PARKED, DisplayLayer.SPEED_CAMERAS)
 
         val root = FrameLayout(this).apply { setBackgroundColor(backgroundColor) }
-        val mapContainer = FrameLayout(this).apply { id = View.generateViewId() }
+        MapLibre.getInstance(this)
+        mapView = MapView(this)
         root.addView(
-            mapContainer,
+            mapView,
             FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT,
             ),
         )
+        mapView.onCreate(savedInstanceState)
 
         val topCard = buildTopCard()
         root.addView(
@@ -240,51 +228,48 @@ class MainActivity : FragmentActivity() {
 
         setContentView(root)
 
-        val mapFragment =
-            supportFragmentManager.findFragmentByTag(PHONE_MAP_TAG)
-                as? SupportNavigationFragment
-                ?: SupportNavigationFragment().also { fragment ->
-                    supportFragmentManager
-                        .beginTransaction()
-                        .replace(mapContainer.id, fragment, PHONE_MAP_TAG)
-                        .commitNow()
-                }
-        mapFragment.getMapAsync { readyMap ->
-            phoneMap = readyMap
-            RoadPulseMapTheme.apply(this, readyMap)
-            readyMap.uiSettings.isCompassEnabled = true
-            readyMap.uiSettings.isZoomControlsEnabled = false
-            readyMap.uiSettings.isMapToolbarEnabled = false
-            readyMap.setPadding(0, dp(150), 0, dp(245))
-            readyMap.setOnCameraIdleListener {
-                if (cameraLayerEnabled &&
-                    !cameraSearchInProgress &&
-                    lastStationaryLocation != null
-                ) {
-                    refreshVisibleCameraLayer()
-                }
-                if (anyRoadLayerEnabled() && !roadSearchInProgress) refreshVisibleRoadContext()
+        CompletableFuture
+            .supplyAsync { LocalMbtilesServer(applicationContext, "bremen.mbtiles").apply { start() } }
+            .thenAccept { server ->
+                tileServer = server
+                runOnUiThread { loadMap(server.port) }
             }
-            readyMap.setOnMarkerClickListener { marker ->
-                val clusterPosition = cameraClusterPositions[marker]
-                if (clusterPosition != null) {
-                    readyMap.animateCamera(
-                        CameraUpdateFactory.newLatLngZoom(
-                            clusterPosition,
-                            (readyMap.cameraPosition.zoom + CLUSTER_ZOOM_STEP)
-                                .coerceAtMost(MAX_MAP_ZOOM),
-                        ),
-                    )
-                    true
-                } else {
-                    false
-                }
-            }
-            destinationStore.load()?.let(::showDestinationOnPhoneMap)
-            centerPhoneMap()
-            if (cameraLayerEnabled) beginParkedCameraSearch()
-        }
         refreshCameraDataAutomatically()
+    }
+
+    private fun loadMap(port: Int) {
+        val styleJson = RoadPulseMapLibreStyle.styleJson(this, port)
+        mapView.getMapAsync { map ->
+            map.setPadding(0, dp(150), 0, dp(245))
+            map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
+                val controller = MapLibreMapController(mapView, map, style)
+                mapController = controller
+                controller.setOnCameraIdleListener {
+                    if (cameraLayerEnabled &&
+                        !cameraSearchInProgress &&
+                        lastStationaryLocation != null
+                    ) {
+                        refreshVisibleCameraLayer()
+                    }
+                    if (anyRoadLayerEnabled() && !roadSearchInProgress) refreshVisibleRoadContext()
+                }
+                controller.setOnMarkerClickListener { marker ->
+                    val clusterPosition = cameraClusterPositions[marker]
+                    if (clusterPosition != null) {
+                        controller.animateCameraTo(
+                            clusterPosition,
+                            (controller.currentZoom() + CLUSTER_ZOOM_STEP).coerceAtMost(MAX_MAP_ZOOM.toDouble()),
+                        )
+                        true
+                    } else {
+                        false
+                    }
+                }
+                destinationStore.load()?.let(::showDestinationOnPhoneMap)
+                centerPhoneMap()
+                if (cameraLayerEnabled) beginParkedCameraSearch()
+            }
+        }
     }
 
     private fun buildTopCard(): View =
@@ -432,8 +417,14 @@ class MainActivity : FragmentActivity() {
             addView(roadStatus, matchWidth(top = 3))
         }
 
+    override fun onStart() {
+        super.onStart()
+        mapView.onStart()
+    }
+
     override fun onResume() {
         super.onResume()
+        mapView.onResume()
         if (!::cameraStatus.isInitialized) return
         val connected = DrivingSessionState.isAndroidAutoConnected
         cameraToggleButton.isEnabled = !connected
@@ -468,74 +459,122 @@ class MainActivity : FragmentActivity() {
         fuelStopButton.text = fuelStopButtonText()
     }
 
-    private fun launchDestinationSearch() {
-        when (usageGuard.searchRequests.tryConsume()) {
-            is QuotaDecision.Blocked -> {
-                destinationStatus.text = "The 1,000-search monthly safety limit is reached."
-                return
-            }
-            is QuotaDecision.Allowed -> Unit
-        }
-
-        val apiKey = googleMapsApiKey()
-        if (apiKey.isBlank() || apiKey == "DEFAULT_API_KEY") {
-            destinationStatus.text = "The local Google Maps API key is not configured."
-            return
-        }
-        if (!Places.isInitialized()) {
-            Places.initializeWithNewPlacesApiEnabled(applicationContext, apiKey)
-        }
-        val intent =
-            PlaceAutocomplete
-                .IntentBuilder()
-                .setAutocompleteSessionToken(AutocompleteSessionToken.newInstance())
-                .build(this)
-        placeAutocompleteLauncher.launch(intent)
+    override fun onPause() {
+        mapView.onPause()
+        super.onPause()
     }
 
-    private fun handlePlaceSelection(data: Intent) {
-        val prediction =
-            PlaceAutocomplete.getPredictionFromIntent(data) ?: run {
-                destinationStatus.text = "No destination was returned by Google."
-                return
+    override fun onStop() {
+        mapView.onStop()
+        super.onStop()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        mapView.onLowMemory()
+    }
+
+    override fun onDestroy() {
+        mapView.onDestroy()
+        tileServer?.stop()
+        super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        mapView.onSaveInstanceState(outState)
+    }
+
+    private fun launchDestinationSearch() {
+        val container =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(20), dp(16), dp(20), dp(4))
             }
-        val sessionToken = PlaceAutocomplete.getSessionTokenFromIntent(data)
-        val requestBuilder =
-            FetchPlaceRequest.builder(
-                prediction.placeId,
-                listOf(
-                    Place.Field.ID,
-                    Place.Field.DISPLAY_NAME,
-                    Place.Field.FORMATTED_ADDRESS,
-                    Place.Field.LOCATION,
-                ),
+        val input =
+            EditText(this).apply {
+                hint = "Search places and destinations"
+                setTextColor(Color.WHITE)
+                setHintTextColor(textMutedColor)
+            }
+        val adapter = ArrayAdapter(this, android.R.layout.simple_list_item_1, mutableListOf<String>())
+        val resultsList =
+            ListView(this).apply {
+                this.adapter = adapter
+            }
+        container.addView(input)
+        container.addView(resultsList, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(320)))
+
+        val dialog =
+            AlertDialog
+                .Builder(this)
+                .setView(container)
+                .setNegativeButton("Cancel", null)
+                .create()
+
+        fun runQuery(query: String) {
+            searchEngine
+                .search(query, lastStationaryLocation?.let { RoadCoordinate(it.latitude, it.longitude) })
+                .whenComplete { results, error ->
+                    if (error != null) return@whenComplete
+                    runOnUiThread {
+                        searchResults = results
+                        adapter.clear()
+                        adapter.addAll(
+                            results.map { result -> listOfNotNull(result.title, result.subtitle).joinToString(" · ") },
+                        )
+                        adapter.notifyDataSetChanged()
+                    }
+                }
+        }
+        input.addTextChangedListener(
+            object : TextWatcher {
+                override fun beforeTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    count: Int,
+                    after: Int,
+                ) = Unit
+
+                override fun onTextChanged(
+                    s: CharSequence?,
+                    start: Int,
+                    before: Int,
+                    count: Int,
+                ) = Unit
+
+                override fun afterTextChanged(s: Editable?) {
+                    runQuery(s?.toString().orEmpty())
+                }
+            },
+        )
+        resultsList.setOnItemClickListener { _, _, position, _ ->
+            searchResults.getOrNull(position)?.let { result ->
+                handleSearchResultSelected(result)
+                dialog.dismiss()
+            }
+        }
+        dialog.show()
+    }
+
+    private fun handleSearchResultSelected(result: SearchResult) {
+        val selected =
+            SelectedDestination(
+                // Offline search has no Google place ID - a stable, non-blank synthetic id keeps
+                // SelectedDestinationStore.load()'s non-blank check satisfied; NavigationActivity/
+                // RoadPulseNavigationScreen build their Waypoint from latitude/longitude instead
+                // of this field whenever coordinates are present (always true here).
+                placeId = "osm:${result.coordinate.latitude},${result.coordinate.longitude}",
+                title = result.title,
+                address = result.subtitle.orEmpty(),
+                latitude = result.coordinate.latitude,
+                longitude = result.coordinate.longitude,
             )
-        if (sessionToken != null) requestBuilder.setSessionToken(sessionToken)
-        destinationStatus.text = "Loading destination…"
-        Places
-            .createClient(this)
-            .fetchPlace(requestBuilder.build())
-            .addOnSuccessListener { response ->
-                val place = response.place
-                val selected =
-                    SelectedDestination(
-                        placeId = prediction.placeId,
-                        title =
-                            place.displayName.orEmpty().ifBlank {
-                                prediction.getPrimaryText(null).toString()
-                            },
-                        address = place.formattedAddress.orEmpty(),
-                        latitude = place.location?.latitude,
-                        longitude = place.location?.longitude,
-                    )
-                destinationStore.save(selected)
-                destinationStatus.text = "${selected.title}\n${selected.address}"
-                startNavigationButton.isEnabled = true
-                showDestinationOnPhoneMap(selected)
-                centerDestinationOnPhoneMap()
-            }.addOnFailureListener { error ->
-                destinationStatus.text = "Unable to load destination: ${error.message}"
-            }
+        destinationStore.save(selected)
+        destinationStatus.text = "${selected.title}\n${selected.address}"
+        startNavigationButton.isEnabled = true
+        showDestinationOnPhoneMap(selected)
+        centerDestinationOnPhoneMap()
     }
 
     private fun startSelectedNavigation() {
@@ -543,6 +582,8 @@ class MainActivity : FragmentActivity() {
             destinationStatus.text = "Search for a destination first."
             return
         }
+        // NavigationActivity still runs on Google Navigation SDK pending its own free-stack
+        // migration, so this quota guard stays until that's done - see ZERO_COST_ARCHITECTURE.md.
         if (usageGuard.navigationDestinations.snapshot().isExhausted) {
             destinationStatus.text = "The 1,000-destination monthly safety limit is reached."
             return
@@ -564,17 +605,9 @@ class MainActivity : FragmentActivity() {
         }
     }
 
-    @Suppress("DEPRECATION")
-    private fun googleMapsApiKey(): String =
-        packageManager
-            .getApplicationInfo(packageName, PackageManager.GET_META_DATA)
-            .metaData
-            ?.getString("com.google.android.geo.API_KEY")
-            .orEmpty()
-
     @SuppressLint("MissingPermission")
     private fun centerPhoneMap() {
-        val map = phoneMap ?: return
+        val controller = mapController ?: return
         val selected = destinationStore.load()
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             val manager = getSystemService(LocationManager::class.java)
@@ -584,13 +617,13 @@ class MainActivity : FragmentActivity() {
                         runCatching { manager.getLastKnownLocation(provider) }.getOrNull()
                     }.maxByOrNull(Location::getTime)
             if (current != null) {
-                map.isMyLocationEnabled = true
-                map.animateCamera(
-                    CameraUpdateFactory.newLatLngZoom(
-                        LatLng(current.latitude, current.longitude),
-                        15f,
-                    ),
+                controller.registerIcon(MY_LOCATION_ICON_ID, myLocationPuckBitmap())
+                controller.setMyLocationPuck(
+                    RoadCoordinate(current.latitude, current.longitude),
+                    current.bearing,
+                    MY_LOCATION_ICON_ID,
                 )
+                controller.animateCameraTo(RoadCoordinate(current.latitude, current.longitude), 15.0)
                 selected?.let(::showDestinationOnPhoneMap)
                 return
             }
@@ -598,30 +631,25 @@ class MainActivity : FragmentActivity() {
         val destinationPosition =
             selected?.let { destination ->
                 if (destination.latitude != null && destination.longitude != null) {
-                    LatLng(destination.latitude, destination.longitude)
+                    RoadCoordinate(destination.latitude, destination.longitude)
                 } else {
                     null
                 }
             }
         if (destinationPosition != null) {
-            map.animateCamera(CameraUpdateFactory.newLatLngZoom(destinationPosition, 14f))
+            controller.animateCameraTo(destinationPosition, 14.0)
         } else {
-            map.moveCamera(CameraUpdateFactory.newLatLngZoom(DEFAULT_MAP_CENTER, 5f))
+            controller.moveCameraTo(DEFAULT_MAP_CENTER, 11.0)
         }
     }
 
     private fun showDestinationOnPhoneMap(destination: SelectedDestination) {
         val latitude = destination.latitude ?: return
         val longitude = destination.longitude ?: return
-        destinationMarker?.remove()
-        destinationMarker =
-            phoneMap?.addMarker(
-                MarkerOptions()
-                    .position(LatLng(latitude, longitude))
-                    .title(destination.title)
-                    .snippet(destination.address)
-                    .icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE)),
-            )
+        val controller = mapController ?: return
+        destinationMarker?.let(controller::removeMarker)
+        controller.registerIcon(DESTINATION_ICON_ID, destinationPinBitmap())
+        destinationMarker = controller.addMarker(RoadCoordinate(latitude, longitude), DESTINATION_ICON_ID)
     }
 
     private fun centerDestinationOnPhoneMap() {
@@ -633,9 +661,7 @@ class MainActivity : FragmentActivity() {
         val latitude = destination.latitude ?: return
         val longitude = destination.longitude ?: return
         showDestinationOnPhoneMap(destination)
-        phoneMap?.animateCamera(
-            CameraUpdateFactory.newLatLngZoom(LatLng(latitude, longitude), 15f),
-        )
+        mapController?.animateCameraTo(RoadCoordinate(latitude, longitude), 15.0)
     }
 
     private fun beginParkedCameraSearch() {
@@ -778,9 +804,9 @@ class MainActivity : FragmentActivity() {
         location: Location,
     ) {
         clearCameraMarkers()
-        val map = phoneMap
-        if (map != null) {
-            addCameraMarkers(map, nearby)
+        val controller = mapController
+        if (controller != null) {
+            addCameraMarkers(controller, nearby)
             if (nearby.isNotEmpty() && !hasFramedCameraLayer) {
                 val pointsToFrame =
                     nearby
@@ -788,15 +814,9 @@ class MainActivity : FragmentActivity() {
                         .take(8)
                         .ifEmpty { nearby.take(1) }
                 val bounds =
-                    LatLngBounds
-                        .Builder()
-                        .include(LatLng(location.latitude, location.longitude))
-                        .also { builder ->
-                            pointsToFrame.forEach { item ->
-                                builder.include(LatLng(item.poi.latitude, item.poi.longitude))
-                            }
-                        }.build()
-                map.animateCamera(CameraUpdateFactory.newLatLngBounds(bounds, dp(48)))
+                    listOf(RoadCoordinate(location.latitude, location.longitude)) +
+                        pointsToFrame.map { RoadCoordinate(it.poi.latitude, it.poi.longitude) }
+                controller.animateCameraToBounds(bounds, dp(48))
                 hasFramedCameraLayer = true
             }
         }
@@ -810,18 +830,18 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun refreshVisibleCameraLayer() {
-        val map = phoneMap ?: return
+        val controller = mapController ?: return
         if (!cameraLayerEnabled || DrivingSessionState.isAndroidAutoConnected) return
-        if (map.cameraPosition.zoom < MIN_CAMERA_LAYER_ZOOM) {
+        if (controller.currentZoom() < MIN_CAMERA_LAYER_ZOOM) {
             cameraViewportQueryId++
             clearCameraMarkers()
             cameraStatus.text = "Zoom in to display every camera in the visible area"
             return
         }
 
-        val bounds = map.projection.visibleRegion.latLngBounds
-        val center = map.cameraPosition.target
-        val zoom = map.cameraPosition.zoom
+        val bounds = controller.visibleBounds()
+        val center = controller.cameraTarget() ?: return
+        val zoom = controller.currentZoom()
         val queryId = ++cameraViewportQueryId
         cameraStatus.text = "Combining camera sources for this map area…"
         Thread {
@@ -830,19 +850,19 @@ class MainActivity : FragmentActivity() {
                     val openGatso =
                         OpenGatsoRepository(openGatsoUpdater.currentDataFile())
                             .enforcementLocationsInBounds(
-                                southLatitude = bounds.southwest.latitude,
-                                westLongitude = bounds.southwest.longitude,
-                                northLatitude = bounds.northeast.latitude,
-                                eastLongitude = bounds.northeast.longitude,
+                                southLatitude = bounds.southWest.latitude,
+                                westLongitude = bounds.southWest.longitude,
+                                northLatitude = bounds.northEast.latitude,
+                                eastLongitude = bounds.northEast.longitude,
                                 referenceLatitude = center.latitude,
                                 referenceLongitude = center.longitude,
                             )
                     val official =
                         officialCameraRepository.enforcementLocationsInBounds(
-                            southLatitude = bounds.southwest.latitude,
-                            westLongitude = bounds.southwest.longitude,
-                            northLatitude = bounds.northeast.latitude,
-                            eastLongitude = bounds.northeast.longitude,
+                            southLatitude = bounds.southWest.latitude,
+                            westLongitude = bounds.southWest.longitude,
+                            northLatitude = bounds.northEast.latitude,
+                            eastLongitude = bounds.northEast.longitude,
                             referenceLatitude = center.latitude,
                             referenceLongitude = center.longitude,
                         )
@@ -850,10 +870,10 @@ class MainActivity : FragmentActivity() {
                         if (zoom >= MIN_OPENSTREETMAP_QUERY_ZOOM) {
                             runCatching {
                                 openStreetMapCameraRepository.enforcementLocationsInBounds(
-                                    southLatitude = bounds.southwest.latitude,
-                                    westLongitude = bounds.southwest.longitude,
-                                    northLatitude = bounds.northeast.latitude,
-                                    eastLongitude = bounds.northeast.longitude,
+                                    southLatitude = bounds.southWest.latitude,
+                                    westLongitude = bounds.southWest.longitude,
+                                    northLatitude = bounds.northEast.latitude,
+                                    eastLongitude = bounds.northEast.longitude,
                                     referenceLatitude = center.latitude,
                                     referenceLongitude = center.longitude,
                                 )
@@ -904,7 +924,7 @@ class MainActivity : FragmentActivity() {
     private fun plotVisibleCameraMarkers(result: CameraLayerResult) {
         val cameras = result.cameras
         clearCameraMarkers()
-        val grouped = phoneMap?.let { map -> addCameraMarkers(map, cameras) } == true
+        val grouped = mapController?.let { controller -> addCameraMarkers(controller, cameras) } == true
         val sources = cameras.flatMap { it.sources }.toSet()
         val sourceText =
             sources
@@ -933,134 +953,107 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun addCameraMarkers(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         cameras: List<NearbyOpenGatsoPoi>,
     ): Boolean {
         val shouldGroup =
             cameras.size > CAMERA_GROUP_THRESHOLD &&
-                map.cameraPosition.zoom < CAMERA_GROUP_MAX_ZOOM
+                controller.currentZoom() < CAMERA_GROUP_MAX_ZOOM
         if (shouldGroup) {
             val cellSize = dp(CAMERA_GROUP_CELL_DP).coerceAtLeast(1)
             val groups =
                 cameras.groupBy { item ->
-                    val point =
-                        map.projection.toScreenLocation(
-                            LatLng(item.poi.latitude, item.poi.longitude),
-                        )
-                    Pair(point.x / cellSize, point.y / cellSize)
+                    val point = controller.screenLocation(RoadCoordinate(item.poi.latitude, item.poi.longitude))
+                    Pair((point.x / cellSize).toInt(), (point.y / cellSize).toInt())
                 }
             groups.values.forEach { group ->
                 if (group.size == 1) {
-                    addCameraMarker(map, group.first())
+                    addCameraMarker(controller, group.first())
                 } else {
                     val position =
-                        LatLng(
+                        RoadCoordinate(
                             group.map { it.poi.latitude }.average(),
                             group.map { it.poi.longitude }.average(),
                         )
-                    val marker =
-                        map.addMarker(
-                            MarkerOptions()
-                                .position(position)
-                                .title("${group.size} cameras")
-                                .snippet("Tap to zoom in")
-                                .icon(cameraGroupIcon(group.size))
-                                .anchor(.5f, .5f)
-                                .zIndex(2f),
-                        )
-                    if (marker != null) {
-                        cameraMarkers += marker
-                        cameraClusterPositions[marker] = position
-                    }
+                    val (iconId, bitmap) = cameraGroupIcon(group.size)
+                    controller.registerIcon(iconId, bitmap)
+                    val marker = controller.addMarker(position, iconId)
+                    cameraMarkers += marker
+                    cameraClusterPositions[marker] = position
                 }
             }
             return true
         }
         cameras.forEach { item ->
-            addCameraMarker(map, item)
+            addCameraMarker(controller, item)
         }
         return false
     }
 
     private fun addCameraMarker(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         item: NearbyOpenGatsoPoi,
     ) {
-        val marker =
-            map.addMarker(
-                MarkerOptions()
-                    .position(LatLng(item.poi.latitude, item.poi.longitude))
-                    .title(cameraTitle(item))
-                    .snippet(
-                        String.format(
-                            Locale.US,
-                            "%.1f km from center · %s%s",
-                            item.distanceMeters / 1_000.0,
-                            item.sources.joinToString(" + ") { it.displayName },
-                            cameraRecordDetails(item),
-                        ),
-                    ).icon(cameraMarkerIcon(item))
-                    .anchor(.5f, .5f),
-            )
-        if (marker != null) cameraMarkers += marker
+        val (iconId, bitmap) = mapMarkerIcons.camera(item.poi.type, item.poi.speedLimitKph)
+        controller.registerIcon(iconId, bitmap)
+        cameraMarkers += controller.addMarker(RoadCoordinate(item.poi.latitude, item.poi.longitude), iconId)
     }
 
-    private fun cameraTitle(item: NearbyOpenGatsoPoi): String {
-        val type =
-            when (item.poi.type) {
-                OpenGatsoPoiType.SPEED_CAMERA -> "Speed camera"
-                OpenGatsoPoiType.AVERAGE_SPEED_CAMERA -> "Average-speed camera"
-                OpenGatsoPoiType.RED_LIGHT_CAMERA -> "Red-light camera"
-                OpenGatsoPoiType.RAIL_CROSSING_CAMERA -> "Rail-crossing camera"
-                else -> "Enforcement point"
-            }
-        return item.poi.speedLimitKph?.let { "$type · $it km/h" } ?: type
-    }
-
-    private fun cameraRecordDetails(item: NearbyOpenGatsoPoi): String {
-        val details =
-            item.sourceRecords
-                .flatMap { record ->
-                    listOfNotNull(
-                        record.roadName?.let { "Road $it" },
-                        record.direction?.let { "Direction $it" },
-                        record.areaName,
-                        record.locationDescription,
-                        record.installedDate?.let { "Installed $it" },
-                        record.sourceId?.let { "ID $it" },
-                    )
-                }.map(String::trim)
-                .filter(String::isNotBlank)
-                .distinct()
-        return if (details.isEmpty()) "" else "\n${details.joinToString(" · ")}"
-    }
-
-    private fun cameraMarkerIcon(item: NearbyOpenGatsoPoi): BitmapDescriptor = mapMarkerIcons.camera(item.poi.type, item.poi.speedLimitKph)
-
-    private fun cameraGroupIcon(count: Int): BitmapDescriptor {
+    private fun cameraGroupIcon(count: Int): Pair<String, Bitmap> {
         val text = if (count > 999) "999+" else count.toString()
-        return cameraIconCache.getOrPut("group:$text") {
-            val size = dp(40)
-            val inset = dp(3).toFloat()
-            val bitmap = createBitmap(size, size, Bitmap.Config.ARGB_8888)
-            val canvas = Canvas(bitmap)
-            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-            paint.style = Paint.Style.FILL
-            paint.color = Color.rgb(13, 42, 61)
-            canvas.drawCircle(size / 2f, size / 2f, size / 2f - inset, paint)
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = dp(3).toFloat()
-            paint.color = accentColor
-            canvas.drawCircle(size / 2f, size / 2f, size / 2f - inset, paint)
-            paint.style = Paint.Style.FILL
-            paint.color = Color.WHITE
-            paint.textAlign = Paint.Align.CENTER
-            paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-            paint.textSize = if (text.length <= 2) dp(13).toFloat() else dp(10).toFloat()
-            val baseline = size / 2f - (paint.ascent() + paint.descent()) / 2f
-            canvas.drawText(text, size / 2f, baseline, paint)
-            BitmapDescriptorFactory.fromBitmap(bitmap)
-        }
+        val id = "group:$text"
+        val size = dp(40)
+        val inset = dp(3).toFloat()
+        val bitmap = createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.rgb(13, 42, 61)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - inset, paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = dp(3).toFloat()
+        paint.color = accentColor
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - inset, paint)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.WHITE
+        paint.textAlign = Paint.Align.CENTER
+        paint.typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        paint.textSize = if (text.length <= 2) dp(13).toFloat() else dp(10).toFloat()
+        val baseline = size / 2f - (paint.ascent() + paint.descent()) / 2f
+        canvas.drawText(text, size / 2f, baseline, paint)
+        return id to bitmap
+    }
+
+    private fun destinationPinBitmap(): Bitmap {
+        val size = dp(36)
+        val bitmap = createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.rgb(30, 136, 229)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - dp(3), paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = dp(3).toFloat()
+        paint.color = Color.WHITE
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - dp(3), paint)
+        return bitmap
+    }
+
+    private fun myLocationPuckBitmap(): Bitmap {
+        val size = dp(24)
+        val bitmap = createBitmap(size, size, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.style = Paint.Style.FILL
+        paint.color = Color.argb(70, 33, 150, 243)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f, paint)
+        paint.color = Color.rgb(33, 150, 243)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - dp(6), paint)
+        paint.style = Paint.Style.STROKE
+        paint.strokeWidth = dp(2).toFloat()
+        paint.color = Color.WHITE
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - dp(6), paint)
+        return bitmap
     }
 
     private fun isLikelyMoving(location: Location): Boolean {
@@ -1069,7 +1062,8 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun clearCameraMarkers() {
-        cameraMarkers.forEach(Marker::remove)
+        val controller = mapController
+        cameraMarkers.forEach { controller?.removeMarker(it) }
         cameraMarkers.clear()
         cameraClusterPositions.clear()
     }
@@ -1166,16 +1160,16 @@ class MainActivity : FragmentActivity() {
         }
 
     private fun refreshVisibleRoadContext() {
-        val map = phoneMap ?: return
+        val controller = mapController ?: return
         if (!anyRoadLayerEnabled() || roadSearchInProgress) return
-        if (map.cameraPosition.zoom < MIN_ROAD_CONTEXT_ZOOM) {
+        if (controller.currentZoom() < MIN_ROAD_CONTEXT_ZOOM) {
             roadViewportQueryId++
             clearRoadContext()
             roadStatus.text = "Zoom in for road signs, signals, and live traffic"
             return
         }
-        val bounds = map.projection.visibleRegion.latLngBounds
-        val roadQueryCenter = map.cameraPosition.target
+        val bounds = controller.visibleBounds()
+        val roadQueryCenter = controller.cameraTarget() ?: return
         val queryId = ++roadViewportQueryId
         val showRoadSigns = displayFilters.isEnabled(DrivingContext.PARKED, DisplayLayer.ROAD_SIGNS)
         val showAutobahnTraffic = displayFilters.isEnabled(DrivingContext.PARKED, DisplayLayer.AUTOBAHN_TRAFFIC)
@@ -1196,10 +1190,10 @@ class MainActivity : FragmentActivity() {
                             }
                             runCatching {
                                 roadInfrastructureRepository.infrastructureInBounds(
-                                    southLatitude = bounds.southwest.latitude,
-                                    westLongitude = bounds.southwest.longitude,
-                                    northLatitude = bounds.northeast.latitude,
-                                    eastLongitude = bounds.northeast.longitude,
+                                    southLatitude = bounds.southWest.latitude,
+                                    westLongitude = bounds.southWest.longitude,
+                                    northLatitude = bounds.northEast.latitude,
+                                    eastLongitude = bounds.northEast.longitude,
                                 )
                             }
                         }
@@ -1208,10 +1202,10 @@ class MainActivity : FragmentActivity() {
                             if (!showWeather) return@supplyAsync WeatherWarningResult(emptyList(), 0L, false)
                             runCatching {
                                 dwdRoadWeatherRepository.warningsInBounds(
-                                    south = bounds.southwest.latitude,
-                                    west = bounds.southwest.longitude,
-                                    north = bounds.northeast.latitude,
-                                    east = bounds.northeast.longitude,
+                                    south = bounds.southWest.latitude,
+                                    west = bounds.southWest.longitude,
+                                    north = bounds.northEast.latitude,
+                                    east = bounds.northEast.longitude,
                                 )
                             }.getOrElse { WeatherWarningResult(emptyList(), 0L, true) }
                         }
@@ -1230,10 +1224,10 @@ class MainActivity : FragmentActivity() {
                             if (!showAutobahnFacilities) return@supplyAsync emptyList()
                             runCatching {
                                 openChargeMapRepository.chargersInBounds(
-                                    southLatitude = bounds.southwest.latitude,
-                                    westLongitude = bounds.southwest.longitude,
-                                    northLatitude = bounds.northeast.latitude,
-                                    eastLongitude = bounds.northeast.longitude,
+                                    southLatitude = bounds.southWest.latitude,
+                                    westLongitude = bounds.southWest.longitude,
+                                    northLatitude = bounds.northEast.latitude,
+                                    eastLongitude = bounds.northEast.longitude,
                                 )
                             }.getOrDefault(emptyList())
                         }
@@ -1285,17 +1279,13 @@ class MainActivity : FragmentActivity() {
                             traffic.copy(
                                 events =
                                     traffic.events.filter { event ->
-                                        event.geometry.any { coordinate ->
-                                            coordinateIsInside(coordinate, bounds)
-                                        }
+                                        event.geometry.any { coordinate -> bounds.contains(coordinate) }
                                     },
                             ),
                         facilities =
                             facilities.copy(
                                 facilities =
-                                    facilities.facilities.filter { facility ->
-                                        coordinateIsInside(facility.coordinate, bounds)
-                                    },
+                                    facilities.facilities.filter { facility -> bounds.contains(facility.coordinate) },
                             ),
                         weather = weather,
                         warnings = warnings,
@@ -1317,33 +1307,26 @@ class MainActivity : FragmentActivity() {
 
     private fun plotRoadContext(result: RoadContextResult) {
         clearRoadContext()
-        val map = phoneMap ?: return
-        addSpeedLimitRoadColours(map, result.infrastructure.speedLimitSections)
-        val points = selectRoadInfrastructurePoints(map, result.infrastructure.points)
+        val controller = mapController ?: return
+        addSpeedLimitRoadColours(controller, result.infrastructure.speedLimitSections)
+        val points = selectRoadInfrastructurePoints(controller, result.infrastructure.points)
         val mapEligiblePointCount =
             result.infrastructure.points.count {
                 it.shouldDisplayOnMap && !it.isRouteGuidanceFeature
             }
         points.forEach { point ->
-            map
-                .addMarker(
-                    MarkerOptions()
-                        .position(LatLng(point.coordinate.latitude, point.coordinate.longitude))
-                        .title(point.title)
-                        .snippet(point.detail)
-                        .icon(roadInfrastructureIcon(point))
-                        .anchor(.5f, .5f)
-                        .zIndex(1f),
-                )?.let(roadMarkers::add)
+            val (iconId, bitmap) = mapMarkerIcons.infrastructure(point)
+            controller.registerIcon(iconId, bitmap)
+            roadMarkers += controller.addMarker(RoadCoordinate(point.coordinate.latitude, point.coordinate.longitude), iconId)
         }
-        result.traffic.events.forEach { event -> addTrafficEvent(map, event) }
+        result.traffic.events.forEach { event -> addTrafficEvent(controller, event) }
         result.facilities.facilities.take(MAX_FACILITY_MARKERS).forEach { facility ->
-            addRoadFacility(map, facility)
+            addRoadFacility(controller, facility)
         }
         result.warnings.warnings.take(MAX_WEATHER_WARNING_MARKERS).forEach { warning ->
-            addWeatherWarning(map, warning)
+            addWeatherWarning(controller, warning)
         }
-        result.weather?.let { addRoadWeather(map, it) }
+        result.weather?.let { addRoadWeather(controller, it) }
         trafficSnapshotStore.save(
             result.traffic.events,
             result.traffic.timestampMillis,
@@ -1404,148 +1387,73 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun addSpeedLimitRoadColours(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         sections: List<com.roadpulse.auto.traffic.SpeedLimitRoadSection>,
     ) {
         sections.take(MAX_SPEED_LIMIT_ROAD_SECTIONS).forEach { section ->
             if (section.geometry.size < 2) return@forEach
-            map
-                .addPolyline(
-                    PolylineOptions()
-                        .addAll(section.geometry.map { LatLng(it.latitude, it.longitude) })
-                        .color(SpeedLimitRoadStyle.colour(section))
-                        .width(9f)
-                        .zIndex(.2f),
-                ).let(trafficPolylines::add)
+            trafficPolylines +=
+                controller.addPolyline(
+                    section.geometry,
+                    SpeedLimitRoadStyle.colour(section).toHexColor(),
+                    widthDp = 9f,
+                )
         }
     }
 
     private fun addTrafficEvent(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         event: TrafficEvent,
     ) {
         val start = event.start ?: return
         val end = event.end ?: start
         val colour = trafficEventColour(event.type)
-        val detail =
-            buildString {
-                if (event.direction.isNotBlank()) append(event.direction)
-                event.delayMinutes?.let {
-                    if (isNotEmpty()) append(" · ")
-                    append("+$it min")
-                }
-                if (event.detail.isNotBlank()) {
-                    if (isNotEmpty()) append("\n")
-                    append(event.detail)
-                }
-            }
-        map
-            .addMarker(
-                MarkerOptions()
-                    .position(LatLng(start.latitude, start.longitude))
-                    .title("${event.type.displayName} starts")
-                    .snippet(detail)
-                    .icon(mapMarkerIcons.trafficEvent(event.type, "S")),
-            )?.let(roadMarkers::add)
+        val (startIconId, startBitmap) = mapMarkerIcons.trafficEvent(event.type, "S")
+        controller.registerIcon(startIconId, startBitmap)
+        roadMarkers += controller.addMarker(start, startIconId)
         if (start != end) {
-            map
-                .addMarker(
-                    MarkerOptions()
-                        .position(LatLng(end.latitude, end.longitude))
-                        .title("${event.type.displayName} ends")
-                        .snippet(detail)
-                        .icon(mapMarkerIcons.trafficEvent(event.type, "E")),
-                )?.let(roadMarkers::add)
+            val (endIconId, endBitmap) = mapMarkerIcons.trafficEvent(event.type, "E")
+            controller.registerIcon(endIconId, endBitmap)
+            roadMarkers += controller.addMarker(end, endIconId)
         }
         if (event.geometry.size > 1) {
-            map
-                .addPolyline(
-                    PolylineOptions()
-                        .addAll(event.geometry.map { LatLng(it.latitude, it.longitude) })
-                        .color(colour)
-                        .width(dp(6).toFloat())
-                        .zIndex(3f),
-                ).let(trafficPolylines::add)
+            trafficPolylines += controller.addPolyline(event.geometry, colour.toHexColor(), widthDp = 6f)
         }
     }
 
     private fun addRoadFacility(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         facility: RoadFacility,
     ) {
-        map
-            .addMarker(
-                MarkerOptions()
-                    .position(LatLng(facility.coordinate.latitude, facility.coordinate.longitude))
-                    .title(facility.title)
-                    .snippet(facility.detail)
-                    .icon(mapMarkerIcons.facility(facility))
-                    .anchor(.5f, .5f),
-            )?.let(roadMarkers::add)
+        val (iconId, bitmap) = mapMarkerIcons.facility(facility)
+        controller.registerIcon(iconId, bitmap)
+        roadMarkers += controller.addMarker(facility.coordinate, iconId)
     }
 
     private fun addWeatherWarning(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         warning: WeatherWarning,
     ) {
-        map
-            .addMarker(
-                MarkerOptions()
-                    .position(LatLng(warning.coordinate.latitude, warning.coordinate.longitude))
-                    .title(warning.event)
-                    .snippet(
-                        listOf(warning.severity, warning.headline, warning.description)
-                            .filter(String::isNotBlank)
-                            .distinct()
-                            .joinToString(" · "),
-                    ).icon(mapMarkerIcons.weatherWarning())
-                    .anchor(.5f, .5f)
-                    .zIndex(4f),
-            )?.let(roadMarkers::add)
+        val (iconId, bitmap) = mapMarkerIcons.weatherWarning()
+        controller.registerIcon(iconId, bitmap)
+        roadMarkers += controller.addMarker(warning.coordinate, iconId)
     }
 
     private fun addRoadWeather(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         result: RoadWeatherResult,
     ) {
         val forecast = result.mostSevere ?: return
-        val label =
-            when {
-                forecast.condition.severity >= 4 -> "ICE"
-                forecast.condition.severity >= 3 -> "SNOW"
-                forecast.condition.severity >= 1 -> "WET"
-                else -> "DRY"
-            }
-        val detail =
-            buildString {
-                append("DWD 24 h road forecast · ${forecast.condition.displayName}")
-                forecast.surfaceTemperatureC?.let {
-                    append(String.format(Locale.US, " · surface %.1f°C", it))
-                }
-                forecast.airTemperatureC?.let {
-                    append(String.format(Locale.US, " · air %.1f°C", it))
-                }
-                append(String.format(Locale.US, " · station %.1f km", result.stationDistanceMeters / 1_000.0))
-            }
-        map
-            .addMarker(
-                MarkerOptions()
-                    .position(LatLng(forecast.coordinate.latitude, forecast.coordinate.longitude))
-                    .title("Road weather · $label")
-                    .snippet(detail)
-                    .icon(mapMarkerIcons.roadWeather(forecast.condition))
-                    .anchor(.5f, .5f)
-                    .zIndex(4f),
-            )?.let(roadMarkers::add)
+        val (iconId, bitmap) = mapMarkerIcons.roadWeather(forecast.condition)
+        controller.registerIcon(iconId, bitmap)
+        roadMarkers += controller.addMarker(forecast.coordinate, iconId)
     }
 
-    private fun roadInfrastructureIcon(point: RoadInfrastructurePoint): BitmapDescriptor = mapMarkerIcons.infrastructure(point)
-
     private fun selectRoadInfrastructurePoints(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         allPoints: List<RoadInfrastructurePoint>,
     ): List<RoadInfrastructurePoint> {
-        val zoom = map.cameraPosition.zoom
+        val zoom = controller.currentZoom()
         val maximum =
             when {
                 zoom < 13f -> 44
@@ -1569,11 +1477,8 @@ class MainActivity : FragmentActivity() {
             .sortedBy(::roadInfrastructurePriority)
             .asSequence()
             .filter { point ->
-                val screen =
-                    map.projection.toScreenLocation(
-                        LatLng(point.coordinate.latitude, point.coordinate.longitude),
-                    )
-                occupiedCells.add(screen.x / cellSize to screen.y / cellSize)
+                val screen = controller.screenLocation(point.coordinate)
+                occupiedCells.add((screen.x / cellSize).toInt() to (screen.y / cellSize).toInt())
             }.take(maximum)
             .toList()
     }
@@ -1614,22 +1519,13 @@ class MainActivity : FragmentActivity() {
             TrafficEventType.CLOSURE -> Color.rgb(123, 31, 162)
         }
 
-    private fun coordinateIsInside(
-        coordinate: RoadCoordinate,
-        bounds: LatLngBounds,
-    ): Boolean =
-        coordinate.latitude in bounds.southwest.latitude..bounds.northeast.latitude &&
-            if (bounds.southwest.longitude <= bounds.northeast.longitude) {
-                coordinate.longitude in bounds.southwest.longitude..bounds.northeast.longitude
-            } else {
-                coordinate.longitude >= bounds.southwest.longitude ||
-                    coordinate.longitude <= bounds.northeast.longitude
-            }
+    private fun Int.toHexColor(): String = String.format(Locale.US, "#%06X", 0xFFFFFF and this)
 
     private fun clearRoadContext() {
-        roadMarkers.forEach(Marker::remove)
+        val controller = mapController
+        roadMarkers.forEach { controller?.removeMarker(it) }
         roadMarkers.clear()
-        trafficPolylines.forEach(Polyline::remove)
+        trafficPolylines.forEach { controller?.removePolyline(it) }
         trafficPolylines.clear()
     }
 
@@ -1790,10 +1686,14 @@ class MainActivity : FragmentActivity() {
         private const val MAX_FACILITY_MARKERS = 80
         private const val MAX_WEATHER_WARNING_MARKERS = 20
         private const val MAX_SPEED_LIMIT_ROAD_SECTIONS = 450
-        private const val CLUSTER_ZOOM_STEP = 2.5f
+        private const val CLUSTER_ZOOM_STEP = 2.5
         private const val MAX_MAP_ZOOM = 19f
-        private const val PHONE_MAP_TAG = "roadpulse_phone_map"
-        private val DEFAULT_MAP_CENTER = LatLng(51.1657, 10.4515)
+        private const val DESTINATION_ICON_ID = "destination-pin"
+        private const val MY_LOCATION_ICON_ID = "my-location-puck"
+
+        // Bremen's centre - the only region covered by the bundled tile/routing/search packages
+        // right now (see ZERO_COST_ARCHITECTURE.md's "Map-package strategy"), not all of Germany.
+        private val DEFAULT_MAP_CENTER = RoadCoordinate(53.0793, 8.8017)
         private val ROAD_LAYER_BUNDLE =
             listOf(
                 DisplayLayer.ROAD_SIGNS,

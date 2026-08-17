@@ -13,6 +13,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.FragmentActivity
 import com.google.android.gms.maps.GoogleMap
 import com.google.android.gms.maps.GoogleMap.CameraPerspective
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.LatLng
 import com.google.android.gms.maps.model.Marker
 import com.google.android.gms.maps.model.MarkerOptions
@@ -420,11 +421,16 @@ class NavigationActivity : FragmentActivity() {
         val selected = destination ?: return
         val waypoint =
             runCatching {
-                Waypoint
-                    .builder()
-                    .setPlaceIdString(selected.placeId)
-                    .setTitle(selected.title)
-                    .build()
+                val builder = Waypoint.builder().setTitle(selected.title)
+                // Prefer coordinates (always present for offline-search-sourced destinations,
+                // which have no Google place ID) - only Google-Places-sourced destinations from
+                // before the free-stack search migration would lack them.
+                if (selected.latitude != null && selected.longitude != null) {
+                    builder.setLatLng(selected.latitude, selected.longitude)
+                } else {
+                    builder.setPlaceIdString(selected.placeId)
+                }
+                builder.build()
             }.getOrElse {
                 showStatus("This selected place cannot be used as a driving destination.")
                 return
@@ -577,7 +583,7 @@ class NavigationActivity : FragmentActivity() {
                         .position(LatLng(point.coordinate.latitude, point.coordinate.longitude))
                         .title(point.title)
                         .snippet("On your route · ${sign.compactText()} · ${point.detail}")
-                        .icon(mapMarkerIcons.infrastructure(point))
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.infrastructure(point).second))
                         .anchor(.5f, .5f)
                         .zIndex(8f),
                 )?.let(routeRoadFeatureMarkers::add)
@@ -626,7 +632,7 @@ class NavigationActivity : FragmentActivity() {
                         .position(LatLng(camera.latitude, camera.longitude))
                         .title(upcomingCamera.compactText())
                         .snippet(upcomingCamera.camera.sources.joinToString(" + ") { it.displayName })
-                        .icon(mapMarkerIcons.camera(camera.type, camera.speedLimitKph))
+                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.camera(camera.type, camera.speedLimitKph).second))
                         .anchor(.5f, .5f)
                         .zIndex(9f),
                 )?.let(routeCameraMarkers::add)

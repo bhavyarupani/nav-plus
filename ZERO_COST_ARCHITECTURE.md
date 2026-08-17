@@ -216,7 +216,39 @@ and offline search are all built and verified:
   syntax. Known limitation: node-based only - road/street-name search without a house number would
   need way-centroid resolution, not built in this pass.
 
-**Not started:** wiring any of this (MapLibre rendering, GraphHopper routing/guidance, voice,
-search) into the app's actual screens in place of Google Maps/Navigation/Places SDK - `MainActivity`,
-`NavigationActivity`, and `RoadPulseNavigationScreen` (the Android Auto screen) still run entirely
-on Google's SDKs. The working Google implementation on `main` is untouched throughout.
+**Resolved for `MainActivity`.** The app's home/"browse" screen now runs entirely on the free
+stack - the first of the three Google-based screens to be migrated:
+- `SupportNavigationFragment`/`GoogleMap` replaced by a raw MapLibre `MapView` + `LocalMbtilesServer`
+  (the same Bremen tile pipeline used throughout this migration) + `MapLibreMapController`.
+- Every marker/polyline layer (destination pin, speed-camera markers with clustering, road
+  infrastructure signs, Autobahn traffic events, road facilities including OpenChargeMap chargers,
+  weather warnings, DWD road-surface forecast, and speed-limit-coloured road sections) ported to
+  `MapLibreMapController`'s marker/polyline API - all the OSM/Autobahn/Tankerkoenig/OpenChargeMap
+  data-fetching logic underneath is completely unchanged, since none of it was ever Google-specific.
+- `MapMarkerIconFactory` changed to return `(iconId, Bitmap)` instead of Google's `BitmapDescriptor`;
+  `NavigationActivity`/`RoadPulseNavigationScreen` (not yet migrated) keep working via a one-line
+  `BitmapDescriptorFactory.fromBitmap(...)` wrap at their call sites.
+- Google Places autocomplete replaced by an in-app search dialog backed by `OfflineSearchEngine`,
+  live-querying as the user types.
+- `SelectedDestination.placeId` is synthesized (`"osm:<lat>,<lon>"`) for offline-search-sourced
+  destinations, since they have no Google place ID; `NavigationActivity`/`RoadPulseNavigationScreen`
+  were given a small, targeted fix (not their full migration - that's still pending) to build their
+  Google `Waypoint` from latitude/longitude when available rather than requiring a real place ID,
+  so destinations picked via the new offline search still route correctly through the still-Google
+  navigation screens in the meantime.
+- Per-marker tap-to-see-details (Google's info-window behaviour) was deliberately dropped in this
+  pass - MapLibre's `SymbolManager` has no built-in equivalent, and building a custom callout UI
+  was out of scope here; the marker icons themselves already encode the key information visually,
+  and the status text below the map summarizes counts/categories.
+- Verified end to end on the physical Pixel 6 Pro, not just compiled: a real launch of the actual
+  `MainActivity` (the app's launcher activity) rendered the MapLibre map with zero crashes, and the
+  real data pipeline populated real markers and polylines - confirmed by screenshot showing "19
+  cameras · GATSO + OSM", "10 limit signs · 1775 coloured speed sections · 21 safety points · 13
+  signals", with camera/traffic-signal/speed-limit icons and coloured speed-section polylines
+  actually visible on screen.
+
+**Not started:** wiring the free stack into `NavigationActivity` and `RoadPulseNavigationScreen`
+(the Android Auto screen), which still run entirely on Google Navigation SDK - see "Cross-cutting
+observations" from the pre-migration investigation for why this is the larger, higher-risk
+remaining piece (route-line/puck/turn-arrow rendering has no existing app code to port). The
+working Google implementation on `main` is untouched throughout.
