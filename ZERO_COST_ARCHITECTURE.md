@@ -17,7 +17,7 @@ exists versus what remains. Do not read this document as a claim that the migrat
 | Map rendering | MapLibre Native Android (`org.maplibre.gl:android-sdk`) | BSD-2-Clause | On-device | No (once style/tiles are local) | Yes | No | None | €0 | MapLibre name not legally required, but OSM data attribution is (see below) | Renderer only — supplies no map data, routing, or search of its own |
 | Map data source | Geofabrik regional extracts (`download.geofabrik.de`), per German Bundesland | Data: ODbL 1.0. Geofabrik's extraction service itself is free, no account | Downloaded at build/update time, not at app runtime | Yes, once per extract/update | Yes (extract is a static file) | No | None documented; Geofabrik asks that automated/bulk mirroring be reasonable, not that individual regional downloads be restricted | €0 | Must credit "© OpenStreetMap contributors" and link openstreetmap.org/copyright; ODbL share-alike applies to the *database*, not to the app's own original code | Extracts are updated daily upstream; this app's bundled/downloaded packages will lag behind by however long between our own regenerations |
 | Vector tile generation | Planetiler (Java, single jar) with the OpenMapTiles schema | Planetiler: Apache 2.0. OpenMapTiles *cartography/schema*: CC BY 4.0 | Run on our own build machine, not on-device, not on any hosted service | Only to fetch the source extract | Output (MBTiles/PMTiles) ships as a static file | No | None (local tool) | €0 | OpenMapTiles schema requires attribution of OpenMapTiles when its schema is used (separate from the OSM data attribution) | Tile generation is a build-time step we run and re-run manually/on a schedule — not a live service |
-| Routing / turn-by-turn | GraphHopper core library (`com.graphhopper:graphhopper-core` + `graphhopper-web-api` for instructions), used as an embedded Java library with our own Android integration layer | Apache 2.0 | On-device, embedded routing graph built from the same Geofabrik extract | No, once the routing graph is built and stored on-device | Yes | No | None | €0 | Apache 2.0 requires preserving the licence/copyright notice; no attribution UI requirement | See "Routing engine decision" below — this is the component with the most real integration risk |
+| Routing / turn-by-turn | GraphHopper core library, **pinned to 7.0** (`com.graphhopper:graphhopper-core:7.0`), used as an embedded Java library with our own Android integration layer | Apache 2.0 | On-device, embedded routing graph built from the same Geofabrik extract | No, once the routing graph is built and stored on-device | Yes | No | None | €0 | Apache 2.0 requires preserving the licence/copyright notice; no attribution UI requirement | Real route calculation confirmed working on the physical Pixel 6 Pro — see "Routing engine decision" below for the three real Android/ART incompatibilities found and fixed along the way |
 | Search / geocoding | Custom offline index built from the same OSM extract, stored in Android's built-in SQLite with FTS (no extra dependency) | Our own code; OSM data still ODbL | On-device | No | Yes | No | None | €0 | Same OSM attribution as map data | Coverage and fuzzy-matching quality depend entirely on what we build — see remaining work |
 | Voice guidance | Android `TextToSpeech` (platform API) | Platform API, no separate licence | On-device | No | Yes | No | None | €0 | None | Quality/voice availability depends on what TTS engine the user has installed; must degrade to text-only if none is available, as instructed |
 | Android Auto | `androidx.car.app` (already integrated) | Apache 2.0 | On-device | No | Yes | No | None | €0 | None | Unchanged by this migration — car-app-library only needs `RoutingInfo`/`Step`/`Lane` data from whatever engine produces it |
@@ -60,6 +60,54 @@ That was evaluated first, honestly, against this actual machine and this actual 
 Valhalla remains the better long-term candidate on routing quality/features and stays documented
 as a future upgrade path once NDK build tooling is set up as its own project, not bundled into
 this migration.
+
+### Three real GraphHopper/Android incompatibilities found and fixed
+
+Getting GraphHopper actually working on-device took three separate rounds of real, on-device (or
+`javap`-confirmed) failures — each is recorded here so the reasoning isn't lost:
+
+1. **`RAMDataAccess` / `VarHandle.withInvokeExactBehavior()` — D8 dexing failure, then a runtime
+   `NoSuchMethodError`.** GraphHopper's default graph storage class calls
+   `VarHandle.withInvokeExactBehavior()`. D8 refuses to dex this below `--min-api 26`
+   (`minSdk` was bumped from 24 to 26 for this reason — see `app/build.gradle.kts`). Bumping
+   `minSdk` alone was not enough: even at API 26+, Android's ART `core-oj.jar` does not implement
+   that method at all, producing a real on-device `NoSuchMethodError`. Confirmed via `javap -c`
+   that `MMapDataAccess` does not call this method (0 occurrences, vs. 2 in `RAMDataAccess`) in
+   GraphHopper 9.1 and 10.2.
+2. **`CustomModel` / Janino runtime bytecode compilation — unsupported on ART.** GraphHopper 8.x
+   through (at least) 10.2 compiles routing-weight expressions (the `CustomModel` JSON: `"if":
+   "true", "limit_to": "car_average_speed"`, etc.) to bytecode at runtime using Janino. On a real
+   device this threw `IllegalArgumentException: ... Cannot compile expression ... class
+   "CustomWeightingHelper" could not be found` — Janino's runtime class generation is incompatible
+   with Android's ART/DEX class loading, not fixable by configuration. **Fix: pinned
+   `graphhopper-core` to 7.0**, which predates the `CustomModel`/Janino system and instead uses
+   the older, simpler `Profile.setVehicle("car").setWeighting("fastest")` API backed by
+   precompiled Java classes (e.g. `FastestWeighting`). Verified via `javap` that neither
+   `RAMDataAccess` nor `MMapDataAccess` in 7.0 call `withInvokeExactBehavior()` either (0
+   occurrences in both), so issue #1 above does not resurface at 7.0 — no MMAP storage override
+   was needed.
+3. **`javax.lang.model.SourceVersion` — a JDK `java.compiler`-module class Android does not ship
+   at all.** Even after pinning to 7.0, the very first real route calculation on-device failed
+   with `NoClassDefFoundError: Ljavax/lang/model/SourceVersion;`. Root cause, confirmed via
+   `javap -c` bytecode inspection of `IntEncodedValueImpl.isValidEncodedValue`: GraphHopper 7.0
+   validates every encoded-value name (`car_access`, `car_average_speed`, etc. — used
+   unconditionally by every profile, not an edge case) by calling
+   `javax.lang.model.SourceVersion.isKeyword(CharSequence)`, a class that lives in the JDK's
+   `java.compiler` module. Android does not include this module at all — this is a genuine,
+   distinct incompatibility from #1 and #2, not a variant of either. **Fix: a minimal
+   compatibility shim** at
+   `app/src/main/kotlin/javax/lang/model/SourceVersion.kt` implementing only the one method
+   GraphHopper calls, backed by the fixed, publicly-documented list of ~50 Java reserved words and
+   literals from the Java Language Specification (a fact, not copyrightable expression — no JDK
+   implementation source was copied). Classes may be defined under `javax.*` package prefixes from
+   application code on Android (unlike the JVM-reserved `java.*` prefix), which is why this
+   approach works.
+
+With all three fixed, a real route calculation (Bremen Hauptbahnhof → Bremen Airport) succeeded on
+the physical Pixel 6 Pro: **distance 5224 m, duration 466 s, 71 geometry points** — matching the
+JVM-only test run on the same coordinates and graph (5224.511 m / 466549 ms) almost exactly (the
+small integer-truncation difference is `Int` rounding in `Route.distanceMeters`/`durationSeconds`,
+not a routing discrepancy).
 
 ## Map-package strategy
 
@@ -120,6 +168,19 @@ under the zero-cost constraint means generating font glyph ranges locally (there
 tools for this) rather than pointing at any hosted glyphs service - tracked as follow-up work, not
 blocking the rest of the migration.
 
-**Not started:** the routing pipeline (GraphHopper graph generation and on-device integration),
-the offline search index, and wiring any of this into the app's actual screens in place of Google
-Maps/Navigation SDK. The working Google implementation on `main` is untouched throughout.
+**Resolved.** The routing pipeline is now built and verified real, end to end:
+- A GraphHopper routing graph (contraction-hierarchy prepared, `car` profile) built from the same
+  Bremen `.osm.pbf` extract used for the map tiles.
+- `GraphHopperRoutingEngine`, this project's `RoutingEngine` implementation
+  (`app/src/main/kotlin/com/roadpulse/auto/engine/GraphHopperRoutingEngine.kt`), loading that
+  bundled graph from app assets into internal storage and calculating real routes via GraphHopper
+  7.0's simple named-weighting API.
+- Three separate, real Android/ART incompatibilities found and fixed along the way — see "Three
+  real GraphHopper/Android incompatibilities found and fixed" above.
+- `GraphHopperPocActivity` confirmed a real on-device route calculation on the physical Pixel 6
+  Pro: Bremen Hauptbahnhof → Bremen Airport, 5224 m / 466 s / 71 geometry points, matching the
+  JVM-only pre-verification run.
+
+**Not started:** the offline search index, and wiring any of this (MapLibre rendering or
+GraphHopper routing) into the app's actual screens in place of Google Maps/Navigation SDK. The
+working Google implementation on `main` is untouched throughout.

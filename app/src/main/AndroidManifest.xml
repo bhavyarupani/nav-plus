@@ -59,6 +59,13 @@
             android:name=".engine.MapLibrePocActivity"
             android:exported="false" />
 
+        <!-- Free-stack migration proof of concept, see ZERO_COST_ARCHITECTURE.md. Not reachable
+             from any app screen. Non-exported: use a temporary exported="true" edit to launch via
+             `adb shell am start`, then revert - do not leave it exported. -->
+        <activity
+            android:name=".engine.GraphHopperPocActivity"
+            android:exported="false" />
+
         <service
             android:name=".car.RoadPulseCarAppService"
             android:exported="true"
