@@ -18,8 +18,8 @@ exists versus what remains. Do not read this document as a claim that the migrat
 | Map data source | Geofabrik regional extracts (`download.geofabrik.de`), per German Bundesland | Data: ODbL 1.0. Geofabrik's extraction service itself is free, no account | Downloaded at build/update time, not at app runtime | Yes, once per extract/update | Yes (extract is a static file) | No | None documented; Geofabrik asks that automated/bulk mirroring be reasonable, not that individual regional downloads be restricted | €0 | Must credit "© OpenStreetMap contributors" and link openstreetmap.org/copyright; ODbL share-alike applies to the *database*, not to the app's own original code | Extracts are updated daily upstream; this app's bundled/downloaded packages will lag behind by however long between our own regenerations |
 | Vector tile generation | Planetiler (Java, single jar) with the OpenMapTiles schema | Planetiler: Apache 2.0. OpenMapTiles *cartography/schema*: CC BY 4.0 | Run on our own build machine, not on-device, not on any hosted service | Only to fetch the source extract | Output (MBTiles/PMTiles) ships as a static file | No | None (local tool) | €0 | OpenMapTiles schema requires attribution of OpenMapTiles when its schema is used (separate from the OSM data attribution) | Tile generation is a build-time step we run and re-run manually/on a schedule — not a live service |
 | Routing / turn-by-turn | GraphHopper core library, **pinned to 7.0** (`com.graphhopper:graphhopper-core:7.0`), used as an embedded Java library with our own Android integration layer | Apache 2.0 | On-device, embedded routing graph built from the same Geofabrik extract | No, once the routing graph is built and stored on-device | Yes | No | None | €0 | Apache 2.0 requires preserving the licence/copyright notice; no attribution UI requirement | Real route calculation confirmed working on the physical Pixel 6 Pro — see "Routing engine decision" below for the three real Android/ART incompatibilities found and fixed along the way |
-| Search / geocoding | Custom offline index built from the same OSM extract, stored in Android's built-in SQLite with FTS (no extra dependency) | Our own code; OSM data still ODbL | On-device | No | Yes | No | None | €0 | Same OSM attribution as map data | Coverage and fuzzy-matching quality depend entirely on what we build — see remaining work |
-| Voice guidance | Android `TextToSpeech` (platform API) | Platform API, no separate licence | On-device | No | Yes | No | None | €0 | None | Quality/voice availability depends on what TTS engine the user has installed; must degrade to text-only if none is available, as instructed |
+| Search / geocoding | Custom offline index (25,930 named OSM nodes) built from the same Bremen extract, stored in Android's built-in SQLite with FTS4 (no extra runtime dependency — `android.database.sqlite` is a platform API) | Our own code; OSM data still ODbL | On-device | No | Yes | No | None | €0 | Same OSM attribution as map data | Node-based only (POIs, `place=*`, and `addr:housenumber`+`addr:street` points) — road/street-name search would need way-centroid resolution, not built; see "Implementation status" |
+| Voice guidance | Android `TextToSpeech` (platform API) | Platform API, no separate licence | On-device | No | Yes | No | None | €0 | None | Quality/voice availability depends on what TTS engine the user has installed; must degrade to text-only if none is available, as instructed — confirmed: `VoiceGuidance` checks `TextToSpeech`'s init callback and silently no-ops if it fails |
 | Android Auto | `androidx.car.app` (already integrated) | Apache 2.0 | On-device | No | Yes | No | None | €0 | None | Unchanged by this migration — car-app-library only needs `RoutingInfo`/`Step`/`Lane` data from whatever engine produces it |
 
 Every row above: billing account required = **No**. Recurring provider cost = **€0**. Paid quota
@@ -181,6 +181,42 @@ blocking the rest of the migration.
   Pro: Bremen Hauptbahnhof → Bremen Airport, 5224 m / 466 s / 71 geometry points, matching the
   JVM-only pre-verification run.
 
-**Not started:** the offline search index, and wiring any of this (MapLibre rendering or
-GraphHopper routing) into the app's actual screens in place of Google Maps/Navigation SDK. The
-working Google implementation on `main` is untouched throughout.
+**Resolved.** The real-time navigation engine, voice guidance, map annotation layer, base style,
+and offline search are all built and verified:
+- `GraphHopperGuidanceEngine` (`RoutingEngine`+`GuidanceEngine`) replaces Google Navigator's
+  real-time behaviour entirely with on-device geometry: cross-track/along-track projection of
+  each GPS fix onto the active route (the same proven equirectangular-projection approach as
+  `driving/JunctionPriorityGuidance.kt`) drives current/next maneuver step, remaining distance,
+  proportional ETA, off-route detection with a confirmation window, and automatic recalculation.
+  Unit-tested (4 tests) since it's pure geometry with an injectable clock.
+- `VoiceGuidance`/`VoiceGuidancePlanner` replace `Navigator.setAudioGuidance` with Android's
+  `TextToSpeech` - phrase selection is pure, unit-tested logic (9 tests) separated from the TTS
+  engine itself, degrading silently to a no-op if no TTS engine is installed.
+- `MapLibreMapController` wraps MapLibre's `SymbolManager`/`LineManager`/`MapLibreMap`
+  (`android-plugin-annotation-v9` 3.0.2) behind the same marker/polyline/camera shape
+  `MainActivity`/`NavigationActivity`/`RoadPulseNavigationScreen` already use against
+  `GoogleMap`/`Marker`/`Polyline`. Verified on the physical Pixel 6 Pro: a marker and polyline
+  added through the controller render correctly over the real Bremen tile pipeline (confirmed by
+  screenshot).
+- `maplibre_style_day.json`/`maplibre_style_night.json` replace `RoadPulseMapTheme`'s Google
+  `MapStyleOptions` JSON with a from-scratch MapLibre GL style rewrite, hand-matched color-by-color
+  to the existing day/night palette. Verified both themes render correctly on-device in each
+  Android dark-mode state (confirmed by screenshot). Still has no label/symbol layers, for the
+  same glyphs reason as above.
+- `OfflineSearchEngine` replaces Google Places autocomplete + `FetchPlaceRequest` with a SQLite
+  FTS4 index of named OSM nodes - POIs, `place=*` entries, and `addr:housenumber`+`addr:street`
+  points - built from the same Bremen extract by a dev-machine-only tool (`BuildSearchIndex.java`,
+  using GraphHopper's own bundled `PbfReader`/`Sink` OSM-PBF parser, already a transitive
+  dependency, plus `org.xerial:sqlite-jdbc` at build time only, not shipped in the app). Real run:
+  scanned 1,661,904 OSM elements, indexed 25,930 named places into a 3.1MB SQLite file bundled as
+  an asset. Verified on-device: a real search for "Hauptbahnhof" against the installed app
+  returned 20 correctly distance-sorted results. Query construction (`OfflineSearchQueryBuilder`)
+  is pure and unit-tested (6 tests), stripping all but Unicode letters/digits per token before
+  appending an FTS4 prefix wildcard, so raw user input can never be interpreted as FTS query
+  syntax. Known limitation: node-based only - road/street-name search without a house number would
+  need way-centroid resolution, not built in this pass.
+
+**Not started:** wiring any of this (MapLibre rendering, GraphHopper routing/guidance, voice,
+search) into the app's actual screens in place of Google Maps/Navigation/Places SDK - `MainActivity`,
+`NavigationActivity`, and `RoadPulseNavigationScreen` (the Android Auto screen) still run entirely
+on Google's SDKs. The working Google implementation on `main` is untouched throughout.
