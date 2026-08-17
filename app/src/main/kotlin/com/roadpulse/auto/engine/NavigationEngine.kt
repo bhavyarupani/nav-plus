@@ -23,6 +23,7 @@ data class Route(
     val distanceMeters: Int,
     val durationSeconds: Int,
     val isAlternative: Boolean = false,
+    val steps: List<ManeuverStep> = emptyList(),
 )
 
 enum class ManeuverType {
@@ -45,12 +46,34 @@ enum class ManeuverType {
     UNKNOWN,
 }
 
+/** Mirrors Google's per-lane recommendation model closely enough for existing UI (the signboard/
+ * lane panel) to consume either source interchangeably. Populated only when the routing engine
+ * can supply it - GraphHopper 7.0's simple API doesn't, so this stays null there; the app's
+ * primary lane-guidance source is the OSM-derived `SignboardGuidanceEngine`, not this field. */
+enum class LaneDirection {
+    LEFT,
+    SLIGHT_LEFT,
+    SHARP_LEFT,
+    STRAIGHT,
+    RIGHT,
+    SLIGHT_RIGHT,
+    SHARP_RIGHT,
+    U_TURN,
+    UNKNOWN,
+}
+
+data class LaneInfo(
+    val directions: List<LaneDirection>,
+    val isRecommended: Boolean,
+)
+
 data class ManeuverStep(
     val maneuver: ManeuverType,
     val instructionText: String,
     val roadName: String?,
     val exitNumber: String?,
     val distanceMeters: Int,
+    val lanes: List<LaneInfo>? = null,
 )
 
 data class GuidanceState(
@@ -59,7 +82,27 @@ data class GuidanceState(
     val distanceToDestinationMeters: Int?,
     val etaEpochSeconds: Long?,
     val isRerouting: Boolean,
+    val hasArrived: Boolean = false,
 )
+
+/** Provider-agnostic route-request outcome, mirroring Google's `Navigator.RouteStatus` closely
+ * enough to drive the same "Route unavailable: ..." UI text. */
+enum class RouteRequestStatus {
+    OK,
+    NO_ROUTE_FOUND,
+    NETWORK_ERROR,
+    LOCATION_UNAVAILABLE,
+    CANCELED,
+    UNKNOWN_ERROR,
+}
+
+/** Thrown by [RoutingEngine] implementations so callers can recover a [RouteRequestStatus]
+ * from a failed [CompletableFuture] via `(exception as? RouteCalculationException)?.status`. */
+class RouteCalculationException(
+    val status: RouteRequestStatus,
+    message: String,
+    cause: Throwable? = null,
+) : Exception(message, cause)
 
 /** Calculates and maintains a route. Implementations may run entirely on-device. Uses
  * CompletableFuture, matching this project's existing convention for async work (no coroutines

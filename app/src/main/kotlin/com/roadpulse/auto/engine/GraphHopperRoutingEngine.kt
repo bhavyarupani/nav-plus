@@ -84,8 +84,22 @@ class GraphHopperRoutingEngine(
                     },
                 )
             request.setProfile(PROFILE_NAME)
-            val response = ensureLoaded().route(request)
-            check(!response.hasErrors()) { "GraphHopper routing failed: ${response.errors}" }
+            val response =
+                try {
+                    ensureLoaded().route(request)
+                } catch (e: IllegalStateException) {
+                    throw RouteCalculationException(
+                        RouteRequestStatus.UNKNOWN_ERROR,
+                        "GraphHopper graph failed to load",
+                        e,
+                    )
+                }
+            if (response.hasErrors()) {
+                throw RouteCalculationException(
+                    RouteRequestStatus.NO_ROUTE_FOUND,
+                    "GraphHopper routing failed: ${response.errors}",
+                )
+            }
             response.all.mapIndexed { index, path ->
                 val geometry =
                     (0 until path.points.size()).map { i ->
@@ -97,6 +111,7 @@ class GraphHopperRoutingEngine(
                     distanceMeters = path.distance.toInt(),
                     durationSeconds = (path.time / 1000).toInt(),
                     isAlternative = index > 0,
+                    steps = path.instructions.map(::toManeuverStep),
                 )
             }
         }, executor)
@@ -106,7 +121,8 @@ class GraphHopperRoutingEngine(
         destination: RoadCoordinate,
     ): CompletableFuture<Route> =
         calculateRoute(currentLocation, destination).thenApply { routes ->
-            routes.firstOrNull() ?: error("No route found")
+            routes.firstOrNull()
+                ?: throw RouteCalculationException(RouteRequestStatus.NO_ROUTE_FOUND, "No route found")
         }
 
     /** Maps a GraphHopper [Instruction] onto this project's provider-independent [ManeuverStep] -
