@@ -31,17 +31,10 @@ class SpeedComplianceAdvisorTest {
     }
 
     @Test
-    fun `check speed triggers within the camera radius`() {
-        assertTrue(SpeedComplianceAdvisor.shouldShowCheckSpeed(0))
-        assertTrue(SpeedComplianceAdvisor.shouldShowCheckSpeed(2_999))
-        assertTrue(SpeedComplianceAdvisor.shouldShowCheckSpeed(SpeedComplianceAdvisor.CHECK_SPEED_CAMERA_RADIUS_METERS))
-    }
-
-    @Test
-    fun `check speed does not trigger beyond the camera radius or with no camera`() {
-        assertFalse(
-            SpeedComplianceAdvisor.shouldShowCheckSpeed(SpeedComplianceAdvisor.CHECK_SPEED_CAMERA_RADIUS_METERS + 1),
-        )
-        assertFalse(SpeedComplianceAdvisor.shouldShowCheckSpeed(null))
+    fun `check speed triggers only for near-limit, never over-limit, unknown, or within-limit`() {
+        assertTrue(SpeedComplianceAdvisor.shouldShowCheckSpeed(SpeedComplianceLevel.NEAR_LIMIT))
+        assertFalse(SpeedComplianceAdvisor.shouldShowCheckSpeed(SpeedComplianceLevel.OVER_LIMIT))
+        assertFalse(SpeedComplianceAdvisor.shouldShowCheckSpeed(SpeedComplianceLevel.WITHIN_LIMIT))
+        assertFalse(SpeedComplianceAdvisor.shouldShowCheckSpeed(SpeedComplianceLevel.UNKNOWN))
     }
 }

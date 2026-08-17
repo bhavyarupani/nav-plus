@@ -40,16 +40,12 @@ object SpeedComplianceAdvisor {
     }
 
     /**
-     * Drives the "Check speed" amber breathing-ring nudge. This is deliberately a single boolean
-     * with no camera location, type, or countdown attached anywhere downstream - by explicit
-     * user instruction this fires on camera proximity in every country, which is a documented
-     * compliance risk under Germany's StVO Section 23 restriction on enforcement-warning
-     * devices; see PRIVACY.md, "Speed compliance". [nearestCameraDistanceMeters] should come
-     * from RouteCameraSnapshot.nearestCameraDistanceMeters, which is populated independent of
-     * that same country's camera-marker/panel policy gate.
+     * Drives the "Check speed" amber breathing-ring nudge. Reverted to speed-limit-only per
+     * explicit instruction, replacing an earlier camera-proximity trigger this project briefly
+     * had - that version was a documented compliance risk under Germany's StVO Section 23
+     * restriction on enforcement-warning devices (see PRIVACY.md history). This version has no
+     * camera involvement at all: it fires purely from [SpeedComplianceLevel.NEAR_LIMIT], the
+     * same level [evaluate] already computes from live speed vs. the mapped limit.
      */
-    fun shouldShowCheckSpeed(nearestCameraDistanceMeters: Int?): Boolean =
-        nearestCameraDistanceMeters != null && nearestCameraDistanceMeters in 0..CHECK_SPEED_CAMERA_RADIUS_METERS
-
-    const val CHECK_SPEED_CAMERA_RADIUS_METERS = 3_000
+    fun shouldShowCheckSpeed(level: SpeedComplianceLevel): Boolean = level == SpeedComplianceLevel.NEAR_LIMIT
 }

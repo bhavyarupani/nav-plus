@@ -64,15 +64,6 @@ data class RouteCameraSnapshot(
     val cameras: List<UpcomingRouteCamera> = emptyList(),
     val countryCode: String? = null,
     val blockedReason: String? = null,
-    /**
-     * Distance to the nearest matched camera on the active route, independent of [blockedReason]
-     * - unlike [cameras], this is populated even where the camera-marker/panel feature is
-     * switched off (e.g. while driving in Germany). It powers only the generic "Check speed"
-     * speed-compliance nudge (SpeedComplianceAdvisor), which never surfaces a camera's location,
-     * type, or countdown - see PRIVACY.md, "Speed compliance" for why that distinction matters
-     * under Germany's StVO Section 23 enforcement-warning-device restriction.
-     */
-    val nearestCameraDistanceMeters: Int? = null,
 ) {
     fun phoneText(): String =
         when {
@@ -319,18 +310,29 @@ object RouteCameraGuidance {
                     countryCode.orEmpty(),
                     AlertVisibilityMode.ACTIVE_DRIVING,
                 )
-            // Cameras are always fetched, regardless of the country policy gate: the generic
-            // "Check speed" nudge (SpeedComplianceAdvisor) intentionally runs everywhere and
-            // never surfaces a camera's location/type, so it isn't subject to the same
-            // enforcement-warning-device restriction the exposed camera list/panel is. See the
-            // nearestCameraDistanceMeters doc on RouteCameraSnapshot.
-            val result = runCatching { loadCameras(appContext, ahead, location) }
+            val result =
+                if (!allowed) {
+                    Result.success(emptyList())
+                } else {
+                    runCatching { loadCameras(appContext, ahead, location) }
+                }
             mainHandler.post {
                 refreshInProgress.set(false)
                 lastCountryCode = countryCode
-                result.onSuccess { cameras ->
-                    cachedCameras = cameras
-                    publishForRoute(route, lastKnownLocation(appContext), countryCode, allowed)
+                if (!allowed) {
+                    cachedCameras = emptyList()
+                    val reason =
+                        if (countryCode.equals("DE", ignoreCase = true)) {
+                            "Camera guidance off while driving in Germany"
+                        } else {
+                            "Camera guidance off until the driving country is confirmed"
+                        }
+                    publish(RouteCameraSnapshot(countryCode = countryCode, blockedReason = reason))
+                } else {
+                    result.onSuccess { cameras ->
+                        cachedCameras = cameras
+                        publishForRoute(route, lastKnownLocation(appContext), countryCode, allowed)
+                    }
                 }
             }
         }.start()
@@ -387,22 +389,10 @@ object RouteCameraGuidance {
         countryCode: String?,
         allowed: Boolean,
     ) {
-        val matched =
-            RouteCameraAnalyzer.analyze(
-                route,
-                location?.let { RoadCoordinate(it.latitude, it.longitude) },
-                cachedCameras,
-            )
-        val nearestDistance =
-            matched
-                .filter { it.distanceMeters <= SpeedComplianceAdvisor.CHECK_SPEED_CAMERA_RADIUS_METERS }
-                .minOfOrNull(UpcomingRouteCamera::distanceMeters)
-
         if (countryCode.isNullOrBlank()) {
             publish(
                 RouteCameraSnapshot(
                     blockedReason = "Camera guidance off until the driving country is confirmed",
-                    nearestCameraDistanceMeters = nearestDistance,
                 ),
             )
             return
@@ -418,16 +408,19 @@ object RouteCameraGuidance {
                 RouteCameraSnapshot(
                     countryCode = countryCode,
                     blockedReason = reason,
-                    nearestCameraDistanceMeters = nearestDistance,
                 ),
             )
             return
         }
         publish(
             RouteCameraSnapshot(
-                cameras = matched,
+                cameras =
+                    RouteCameraAnalyzer.analyze(
+                        route,
+                        location?.let { RoadCoordinate(it.latitude, it.longitude) },
+                        cachedCameras,
+                    ),
                 countryCode = countryCode,
-                nearestCameraDistanceMeters = nearestDistance,
             ),
         )
     }

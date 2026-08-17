@@ -193,12 +193,12 @@ class RoadPulseNavigationScreen(
         latestCameraSnapshot = snapshot
         showRouteCameraMarkers(snapshot.cameras)
         TurnByTurnState.latest?.let(::rebuildRoutingInfo)
-        renderSpeedCompliance()
         invalidate()
     }
 
-    /** Mirrors NavigationActivity's ring: red speed digit over the limit, amber breathing ring
-     * + "Check speed" on camera proximity. See [com.roadpulse.auto.driving.SpeedComplianceAdvisor]. */
+    /** Mirrors NavigationActivity's ring: red speed digit over the limit, amber breathing ring +
+     * "Check speed" on [com.roadpulse.auto.driving.SpeedComplianceLevel.NEAR_LIMIT] - speed vs.
+     * mapped limit only, no camera data. See [com.roadpulse.auto.driving.SpeedComplianceAdvisor]. */
     private fun renderSpeedCompliance() {
         val ring = speedComplianceRing ?: return
         val compliance =
@@ -206,15 +206,13 @@ class RoadPulseNavigationScreen(
                 latestSpeedLimit?.currentSpeedKph,
                 latestSpeedLimit?.currentLimitKph,
             )
-        val showCheckSpeed =
-            com.roadpulse.auto.driving.SpeedComplianceAdvisor.shouldShowCheckSpeed(
-                latestCameraSnapshot.nearestCameraDistanceMeters,
-            )
         ring.render(
             speedKph = compliance.speedKph,
             limitKph = compliance.limitKph,
             isOverLimit = compliance.level == com.roadpulse.auto.driving.SpeedComplianceLevel.OVER_LIMIT,
-            showCheckSpeed = showCheckSpeed,
+            showCheckSpeed =
+                com.roadpulse.auto.driving.SpeedComplianceAdvisor
+                    .shouldShowCheckSpeed(compliance.level),
         )
     }
 

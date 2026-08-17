@@ -54,16 +54,13 @@ RoadPulse is currently a private, locally installed test application.
   the driving UI.
 
 - **Speed compliance.** The active-navigation speed ring turns red when current GPS speed exceeds
-  the mapped speed limit for the current road (speed-vs-limit only, no camera data involved).
-  Separately, an amber breathing ring and a generic "Check speed" label appear whenever a mapped
-  enforcement camera is within 3 km of the route ahead - by explicit product decision this runs
-  in every country, including Germany, and does not consult the country-based policy gate
-  described above for the camera list/panel. No camera location, type, or countdown is shown
-  anywhere in this feature - only the generic nudge. This is a **known, unresolved compliance
-  risk**: Germany's StVO Section 23 restricts using or carrying a ready-for-use device that warns
-  of traffic enforcement while driving, and this feature's factual behavior (a phone signal tied
-  to camera proximity while driving) may fall within that restriction regardless of how generic
-  the on-screen text is. This has not had legal review. Do not treat its existence in this build
-  as a compliance conclusion.
+  the mapped speed limit for the current road, and turns amber with a pulsing halo around the
+  speed-limit sign plus a "Check speed" label when speed is close to (but not yet over) that same
+  mapped limit. Both states are derived purely from live GPS speed compared with the mapped
+  speed limit - no camera or enforcement data is read or involved in this feature. An earlier
+  build briefly tied the amber state to camera proximity instead; that version was reverted
+  before release specifically because it raised an unresolved question under Germany's StVO
+  Section 23 restriction on enforcement-warning devices. This history is kept here so the
+  reasoning isn't lost - the current behavior does not have that exposure.
 
 This notice must be reviewed and expanded before RoadPulse is shared or distributed.
