@@ -35,13 +35,11 @@ enum class LaneState {
     UNKNOWN,
 }
 
-/** Where a piece of guidance came from, tracked per-element so Google and OSM content are never
- * visually conflated (see THIRD_PARTY_DATA.md, "Google Maps Platform compliance" section).
- * [GRAPHHOPPER] marks the free-stack case where the only signal is GraphHopper's own fork/ramp
- * maneuver sign with no OSM junction match to enrich it - see `SignboardGuidanceEngine`'s
- * `GuidanceState`-based `build` overload. */
+/** Where a piece of guidance came from, tracked per-element so GraphHopper and OSM content are
+ * never visually conflated (see THIRD_PARTY_DATA.md, "Google Maps Platform compliance" section).
+ * [GRAPHHOPPER] marks the case where the only signal is GraphHopper's own fork/ramp maneuver sign
+ * with no OSM junction match to enrich it - see `SignboardGuidanceEngine.build`. */
 enum class GuidanceDataSource {
-    GOOGLE_NAVIGATION_SDK,
     OPENSTREETMAP,
     GRAPHHOPPER,
     BLENDED,

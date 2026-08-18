@@ -966,6 +966,7 @@ class RoadPulseNavigationScreen(
             .build()
     }
 
+    @android.annotation.SuppressLint("MissingPermission")
     private fun toggleRouteStop(supermarket: Boolean) {
         val current = routeStopPreferences.load()
         val mode = if (supermarket) current.supermarketMode.next() else current.fuelMode.next()

@@ -5,13 +5,14 @@ import android.content.res.Configuration
 import com.roadpulse.auto.R
 
 /**
- * Free-stack replacement for [RoadPulseMapTheme]: that class applies Google's proprietary
- * `MapStyleOptions` JSON format (`featureType`/`elementType`/`stylers`), which has no mechanical
- * conversion to MapLibre's Mapbox-GL-style-spec JSON (`sources`/`layers`/`paint`) - a different
- * schema entirely. `maplibre_style_day.json`/`maplibre_style_night.json` are a from-scratch
- * MapLibre style rewrite, hand-matched to the same day/night color palette as
- * `roadpulse_map_day.json`/`roadpulse_map_night.json` (see the color-by-color mapping in each
- * file's layer paint properties) so the app's visual identity is unchanged by the renderer swap.
+ * Free-stack replacement for the app's former Google-based map styling, which applied Google's
+ * proprietary `MapStyleOptions` JSON format (`featureType`/`elementType`/`stylers`) - that format
+ * has no mechanical conversion to MapLibre's Mapbox-GL-style-spec JSON (`sources`/`layers`/
+ * `paint`), a different schema entirely. `maplibre_style_day.json`/`maplibre_style_night.json`
+ * are a from-scratch MapLibre style rewrite, hand-matched to the same day/night color palette as
+ * the retired `roadpulse_map_day.json`/`roadpulse_map_night.json` (kept in `res/raw` as the
+ * color-mapping reference these were hand-matched against) so the app's visual identity is
+ * unchanged by the renderer swap.
  *
  * Deliberately has no label/symbol layers, matching the already-verified-working
  * `maplibre_poc_style.json`: a `symbol` layer with `text-field` but no `glyphs` source stalls

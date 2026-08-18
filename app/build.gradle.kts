@@ -53,26 +53,17 @@ android {
     }
 }
 
-configurations.configureEach {
-    exclude(group = "com.google.android.gms", module = "play-services-maps")
-}
-
 dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.fragment:fragment-ktx:1.8.9")
     implementation("androidx.car.app:app:1.7.0")
     implementation("androidx.car.app:app-projected:1.7.0")
-    implementation("com.google.android.libraries.navigation:navigation:7.6.1")
-    implementation("com.google.android.libraries.places:places:5.3.0")
     implementation("org.apache.commons:commons-compress:1.27.1")
 
-    // Free-stack migration proof of concept - see ZERO_COST_ARCHITECTURE.md. Not wired into any
-    // app screen yet; added here to verify it resolves and builds against this project's actual
-    // AGP/Kotlin/compileSdk versions before further migration work depends on it.
+    // Map rendering - see ZERO_COST_ARCHITECTURE.md for the full migration record.
     implementation("org.maplibre.gl:android-sdk:11.11.0")
-    // Symbol/line annotation managers (SymbolManager/LineManager) - the closest MapLibre
-    // equivalent to GoogleMap's addMarker/addPolyline, used by MapLibreMapController to replace
-    // those call sites across MainActivity/NavigationActivity/RoadPulseNavigationScreen.
+    // Symbol/line annotation managers (SymbolManager/LineManager), used by MapLibreMapController
+    // for marker/polyline rendering across MainActivity/NavigationActivity/RoadPulseNavigationScreen.
     implementation("org.maplibre.gl:android-plugin-annotation-v9:3.0.2")
     // Pinned to 7.0, not the latest 10.x: from 8.x onward GraphHopper's routing weighting is
     // computed via CustomModel expressions compiled at runtime with Janino, which doesn't work

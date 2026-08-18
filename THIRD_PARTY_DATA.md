@@ -9,18 +9,19 @@ RoadPulse itself is proprietary — see `LICENSE`.
 | Dependency | License | Notes |
 |---|---|---|
 | AndroidX (`androidx.activity`, `androidx.fragment`, `androidx.car.app`, `androidx.core`, `androidx.lifecycle`) | Apache License 2.0 | Google, open source |
-| `com.google.android.libraries.navigation:navigation` (Google Navigation SDK) | Proprietary | Subject to the Google Maps Platform Terms of Service, not open source |
-| `com.google.android.libraries.places:places` (Google Places SDK) | Proprietary | Subject to the Google Maps Platform Terms of Service, not open source |
+| `org.maplibre.gl:android-sdk`, `org.maplibre.gl:android-plugin-annotation-v9` | BSD-2-Clause | Map rendering, replacing Google Maps SDK — see ZERO_COST_ARCHITECTURE.md |
+| `com.graphhopper:graphhopper-core` | Apache License 2.0 | On-device routing, replacing Google Navigation SDK — see ZERO_COST_ARCHITECTURE.md |
 | `org.apache.commons:commons-compress` | Apache License 2.0 | |
 | `com.android.tools:desugar_jdk_libs_nio` | GPLv2 with Classpath Exception (OpenJDK-derived portions) + Apache License 2.0 (Google's wrapper) | Build-time only; not a shipped source dependency in the usual sense |
 | `junit:junit` | Eclipse Public License 1.0 | Test-only, not included in the release APK |
 | `org.json:json` | The JSON License (permissive, non-OSI-approved; includes the "shall be used for Good, not Evil" clause) | Test-only in this project's declared scope |
 | `org.jlleitschuh.gradle.ktlint` (build tooling) | MIT License | Build-time only, not shipped |
-| `com.google.android.libraries.mapsplatform.secrets-gradle-plugin` (build tooling) | Apache License 2.0 | Build-time only, not shipped |
+| `com.google.android.libraries.mapsplatform.secrets-gradle-plugin` (build tooling) | Apache License 2.0 | Build-time only, not shipped; injects the Tankerkoenig/Open Charge Map API keys from `local.properties` |
 
-Google's Navigation SDK and Places SDK are proprietary and licensed under the Google Maps
-Platform Terms of Service (https://cloud.google.com/maps-platform/terms), not an open-source
-license — using them requires an active, compliant Google Cloud project and API key.
+As of the free-stack migration (see ZERO_COST_ARCHITECTURE.md), RoadPulse no longer depends on
+Google Maps SDK, Google Navigation SDK, or Google Places SDK — the `com.google.android.libraries.*`
+proprietary dependencies previously listed here, and the Google Maps Platform Terms of Service
+compliance obligations they carried, no longer apply to this app.
 
 ## Icon and visual assets
 
@@ -38,50 +39,19 @@ table will gain a row per asset as that work lands, each with source, licence, o
 modified status, and where it's used, per the project's asset budget (€0 for v1 — Material
 Symbols under Apache 2.0, everything else hand-authored).
 
-## Google Maps Platform compliance for OSM-enriched navigation display
+## Google Maps Platform compliance (retired)
 
-RoadPulse displays OpenStreetMap-sourced markers (road signs, cameras, motorway junctions,
-signboards) on top of the Google Map/Navigation SDK surface, and enriches Google's own
-turn-by-turn maneuver display with OSM tag data (destination names, lane topology). Two clauses
-of the Google Maps Platform Terms of Service govern this and were verified directly against
-Google's published text (not assumed) on 2026-08-14:
-
-- **Android Auto is confirmed permitted.** The Navigation SDK's own policies page
-  (https://developers.google.com/maps/documentation/navigation/android-sdk/policies) states
-  verbatim: "Commercial use is permitted; however, creating products similar to Google Maps,
-  using the SDK in embedded devices (except for projection to systems like Android Auto), and
-  heavy vehicle navigation require explicit consent." RoadPulse's Android Auto surface is a
-  `androidx.car.app` projection from the phone app, not firmware baked into a vehicle — the
-  explicit exception this clause carves out. The separate main Terms of Service "No Use in
-  Embedded Vehicle Systems" clause (3.2.3(f)) names the lighter-weight Directions/Maps SDK APIs
-  used to build an ad-hoc dashboard navigator as its example of what's disallowed, not the
-  Navigation SDK's own documented, purpose-built Android Auto path.
-- **Overlaying OSM data on the Google Map remains a reasonable, not certain, interpretation.**
-  The main Terms of Service, section 3.2.3(e) "No Use With Non-Google Maps", states verbatim:
-  "To avoid quality issues and/or brand confusion, Customer will not use the Google Maps Core
-  Services with or near a non-Google Map in a Customer Application. For example, Customer will
-  not (i) display or use Places content on a non-Google Map, (ii) display Street View imagery
-  and non-Google Maps on the same screen, or (iii) link a Google Map to non-Google Maps Content
-  or a non-Google Map." Every example given is Google content leaking onto a *non*-Google map
-  surface — the reverse of RoadPulse's architecture (third-party data displayed on a *Google*
-  map surface). That reading is reasonable but the "with or near" wording is undefined and not
-  dispositive either way. This remains a documented assumption, not a verified legal conclusion;
-  human legal review is still recommended before commercial launch.
-- **A concrete, actionable rule was found and is now enforced by design.** The same Navigation
-  SDK policies page requires: "Visually distinguish Google Maps Platform Content from other
-  content by using UI cues such as a border, background color, shadow, or sufficient whitespace,"
-  and "Don't misrepresent Google Maps by attributing it with non-Google Maps Platform content."
-  RoadPulse's signboards and OSM markers use a distinct German-road-sign visual language (blue/
-  yellow signboard chrome, dedicated iconography) rather than Google's own UI style, and every
-  enriched navigation element records its `GuidanceDataSource` (Google-generated vs.
-  OSM-enriched vs. blended) so Google-sourced and OSM-sourced content are never presented as the
-  same thing.
-- **Google's route and maneuver stay authoritative.** OSM enrichment only adds supplementary
-  destination/lane-topology text alongside Google's own maneuver; it never changes the route,
-  the maneuver type, or the turn instruction. Where Google's own generated `StepInfo` lane and
-  maneuver bitmaps are reliable, RoadPulse prefers displaying that Google-generated imagery
-  directly rather than re-deriving it, and reserves its own composited signboard rendering for
-  the added destination-of-travel text Google's bitmap does not include.
+Through the free-stack migration (see ZERO_COST_ARCHITECTURE.md), RoadPulse displayed OpenStreetMap-
+sourced markers and signboard/lane enrichment on top of the Google Map/Navigation SDK surface, which
+required specific Google Maps Platform Terms of Service compliance: Android Auto projection
+permission, a "no use with non-Google maps" reading, visual distinction between Google- and
+OSM-sourced content (tracked per-element via `GuidanceDataSource`), and treating Google's own route/
+maneuver as authoritative over OSM enrichment. That compliance analysis no longer applies — the
+Google Map/Navigation SDK surface has been fully replaced by MapLibre Native (rendering) and
+GraphHopper (routing), both open source, and `GuidanceDataSource` no longer has a Google-sourced
+case at all. OSM signboard/lane enrichment is unchanged in its own right: it still only adds
+supplementary destination/lane-topology text alongside the active maneuver, never altering the
+route or turn instruction itself.
 
 ## Third-party data
 
@@ -160,8 +130,7 @@ signs; walking, variable, and no-fixed-limit values use distinct labels. German 
 `DE:rural`, `DE:motorway`, and `DE:living_street` metadata is translated to the corresponding
 general passenger-car rule. Conditional text is preserved, not automatically evaluated, because
 weather, vehicle, school-day, temporary-sign, and time conditions require context the app may not
-have. Missing limits are never guessed. During phone guidance, Google's own current-road limit
-control is also enabled and appears only where the Navigation SDK considers its data reliable.
+have. Missing limits are never guessed.
 
 The same local query loads public toilets mapped within one kilometre of a visible motorway.
 `fee=no` is labelled free; `fee=yes`, an explicit `charge`, or customer-only access is labelled

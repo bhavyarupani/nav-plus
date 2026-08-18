@@ -7,7 +7,9 @@ import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
 import java.net.URL
@@ -285,13 +287,27 @@ class DwdRoadWeatherRepository private constructor(
         return try {
             if (connection.responseCode !in 200..299) error("DWD returned HTTP ${connection.responseCode}")
             connection.inputStream.use { input ->
-                val bytes = input.readNBytes((maximumBytes + 1).toInt())
+                val bytes = input.readUpTo((maximumBytes + 1).toInt())
                 check(bytes.size <= maximumBytes) { "DWD warnings exceeded their size limit" }
                 bytes.toString(Charsets.UTF_8)
             }
         } finally {
             connection.disconnect()
         }
+    }
+
+    /** `InputStream.readNBytes(int)` equivalent (that overload needs API 33; minSdk here is 26). */
+    private fun InputStream.readUpTo(limit: Int): ByteArray {
+        val output = ByteArrayOutputStream()
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var totalRead = 0
+        while (totalRead < limit) {
+            val read = read(buffer, 0, minOf(buffer.size, limit - totalRead))
+            if (read == -1) break
+            output.write(buffer, 0, read)
+            totalRead += read
+        }
+        return output.toByteArray()
     }
 
     private fun openConnection(url: String) =

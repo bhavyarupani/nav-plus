@@ -8,7 +8,6 @@ import android.location.Location
 import android.location.LocationManager
 import android.os.Handler
 import android.os.Looper
-import com.google.android.libraries.navigation.Navigator
 import com.roadpulse.auto.engine.Route
 import com.roadpulse.auto.traffic.OpenStreetMapRoadInfrastructureRepository
 import com.roadpulse.auto.traffic.RoadCoordinate
@@ -249,22 +248,6 @@ object SpeedLimitAheadGuidance {
         listeners.forEach { listener -> mainHandler.post { listener(null) } }
     }
 
-    fun refresh(
-        context: Context,
-        navigator: Navigator,
-        force: Boolean = false,
-    ) {
-        val geometry =
-            runCatching {
-                navigator.currentRouteSegment?.latLngs.orEmpty().map {
-                    RoadCoordinate(it.latitude, it.longitude)
-                }
-            }.getOrDefault(emptyList())
-        refresh(context, geometry, force)
-    }
-
-    /** Free-stack equivalent of the `Navigator`-based [refresh] above, for `GraphHopperRoutingEngine`-
-     * produced routes. */
     fun refresh(
         context: Context,
         route: Route,

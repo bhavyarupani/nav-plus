@@ -4,17 +4,11 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.google.android.gms.maps.model.LatLng
-import com.google.android.libraries.navigation.Navigator
-import com.google.android.libraries.navigation.RoutingOptions
-import com.google.android.libraries.navigation.Waypoint
 import com.roadpulse.auto.driving.RouteCameraAnalyzer
 import com.roadpulse.auto.engine.Route
 import com.roadpulse.auto.engine.RouteCalculationException
 import com.roadpulse.auto.engine.RouteRequestStatus
 import com.roadpulse.auto.engine.RoutingEngine
-import com.roadpulse.auto.quota.GoogleUsageGuard
-import com.roadpulse.auto.quota.QuotaDecision
 import com.roadpulse.auto.traffic.RoadCoordinate
 import java.time.ZoneId
 import java.time.ZonedDateTime
@@ -26,120 +20,10 @@ class RouteStopOptimizer(
 ) {
     private val appContext = context.applicationContext
     private val preferences = RouteStopPreferencesStore(appContext)
-    private val usageGuard = GoogleUsageGuard(appContext)
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    fun setRoute(
-        navigator: Navigator,
-        finalDestination: Waypoint,
-        routingOptions: RoutingOptions,
-        onProgress: (String) -> Unit = {},
-        onComplete: (RouteStopPlan) -> Unit,
-    ) {
-        val enabled = preferences.load()
-        if (!enabled.hasEnabledStop) {
-            navigator.setDestination(finalDestination, routingOptions).setOnResultListener { status ->
-                onComplete(RouteStopPlan(status = status))
-            }
-            return
-        }
-
-        onProgress("Calculating the direct route before optimizing stops…")
-        navigator.setDestination(finalDestination, routingOptions).setOnResultListener { baseStatus ->
-            if (baseStatus != Navigator.RouteStatus.OK) {
-                onComplete(RouteStopPlan(status = baseStatus))
-                return@setOnResultListener
-            }
-
-            val routePoints = navigator.routeSegments.flatMap { it.latLngs }.deduplicated()
-            val direct = navigator.timeAndDistanceList
-            val directMeters = direct.sumOf { it.meters }
-            val directSeconds = direct.sumOf { it.seconds }
-            if (routePoints.size < 2 || directMeters <= 0) {
-                onComplete(
-                    RouteStopPlan(
-                        status = Navigator.RouteStatus.OK,
-                        note = "Direct route used because its route line was unavailable.",
-                    ),
-                )
-                return@setOnResultListener
-            }
-
-            searchStops(
-                geometry = routePoints.map { RoadCoordinate(it.latitude, it.longitude) },
-                directMeters = directMeters,
-                directSeconds = directSeconds,
-                enabled = enabled,
-                onProgress = onProgress,
-            ) { selections, note ->
-                if (selections.isEmpty()) {
-                    onComplete(RouteStopPlan(Navigator.RouteStatus.OK, note = note))
-                    return@searchStops
-                }
-
-                val stopWaypoints =
-                    selections.sortedBy { it.metersFromRouteOrigin }.mapNotNull {
-                        runCatching {
-                            Waypoint
-                                .builder()
-                                .setLatLng(it.coordinate.latitude, it.coordinate.longitude)
-                                .setTitle(it.title)
-                                .setVehicleStopover(true)
-                                .build()
-                        }.getOrNull()
-                    }
-                if (stopWaypoints.isEmpty()) {
-                    onComplete(RouteStopPlan(Navigator.RouteStatus.OK, note = note))
-                    return@searchStops
-                }
-
-                when (usageGuard.navigationDestinations.tryConsume()) {
-                    is QuotaDecision.Blocked -> {
-                        onComplete(
-                            RouteStopPlan(
-                                Navigator.RouteStatus.OK,
-                                note = "Stops skipped because the monthly route limit is reached.",
-                            ),
-                        )
-                    }
-                    is QuotaDecision.Allowed -> {
-                        onProgress("Building the route with ${stopWaypoints.size} optimized stop(s)…")
-                        navigator
-                            .setDestinations(
-                                stopWaypoints + finalDestination,
-                                routingOptions,
-                            ).setOnResultListener { optimizedStatus ->
-                                if (optimizedStatus == Navigator.RouteStatus.OK) {
-                                    onComplete(
-                                        RouteStopPlan(
-                                            status = optimizedStatus,
-                                            stops = selections.sortedBy { it.metersFromRouteOrigin },
-                                            note = note,
-                                        ),
-                                    )
-                                } else {
-                                    // Preserve useful navigation even if an intermediate place cannot route.
-                                    navigator
-                                        .setDestination(finalDestination, routingOptions)
-                                        .setOnResultListener { fallbackStatus ->
-                                            onComplete(
-                                                RouteStopPlan(
-                                                    status = fallbackStatus,
-                                                    note = "The optimized stop route was unavailable; using the direct route.",
-                                                ),
-                                            )
-                                        }
-                                }
-                            }
-                    }
-                }
-            }
-        }
-    }
-
-    /** Free-stack equivalent of the `Navigator`-based [setRoute] above, backed by a
-     * [RoutingEngine] (GraphHopper) instead of Google's `Navigator.setDestination(s)`. No usage
-     * quota applies - GraphHopper routing is on-device and unmetered. */
+    /** Backed by a [RoutingEngine] (GraphHopper). No usage quota applies - GraphHopper routing
+     * is on-device and unmetered. */
     fun setRoute(
         routingEngine: RoutingEngine,
         origin: RoadCoordinate,
@@ -433,8 +317,6 @@ class RouteStopOptimizer(
                 }
             return openCandidates.minWithOrNull(comparator)
         }
-
-        private fun List<LatLng>.deduplicated(): List<LatLng> = filterIndexed { index, point -> index == 0 || point != this[index - 1] }
     }
 }
 
@@ -484,22 +366,8 @@ data class OptimizedRouteStop(
     }
 }
 
-data class RouteStopPlan(
-    val status: Navigator.RouteStatus,
-    val stops: List<OptimizedRouteStop> = emptyList(),
-    val note: String? = null,
-) {
-    fun summary(): String? =
-        when {
-            stops.isNotEmpty() -> stops.joinToString("\n") { it.summary() }
-            !note.isNullOrBlank() -> note
-            else -> null
-        }
-}
-
-/** Free-stack equivalent of [RouteStopPlan], carrying the actual [Route] (needed to start
- * [com.roadpulse.auto.engine.GuidanceEngine] guidance) instead of relying on a side-effected
- * `Navigator` instance. */
+/** Carries the actual [Route] (needed to start [com.roadpulse.auto.engine.GuidanceEngine]
+ * guidance) alongside the request's [RouteRequestStatus]. */
 data class FreeRouteStopPlan(
     val route: Route?,
     val status: RouteRequestStatus,

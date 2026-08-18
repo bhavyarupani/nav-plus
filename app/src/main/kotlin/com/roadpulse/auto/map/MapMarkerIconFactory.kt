@@ -26,9 +26,7 @@ import kotlin.math.sin
  *
  * Returns `(iconId, Bitmap)` rather than a renderer-specific type: [MapLibreMapController]
  * callers register the bitmap once via `registerIcon(iconId, bitmap)` and reuse the id for every
- * marker; Google `GoogleMap` callers (still `NavigationActivity`/`RoadPulseNavigationScreen`,
- * pending their own free-stack migration) wrap the bitmap with `BitmapDescriptorFactory.fromBitmap`
- * at the call site instead - no Google Maps SDK type appears in this file.
+ * marker.
  */
 class MapMarkerIconFactory(
     context: Context,
