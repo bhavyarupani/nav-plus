@@ -5,6 +5,8 @@ import com.google.android.libraries.mapsplatform.turnbyturn.model.NavState
 import com.google.android.libraries.mapsplatform.turnbyturn.model.StepInfo
 import com.roadpulse.auto.driving.RouteCameraAnalyzer
 import com.roadpulse.auto.driving.UpcomingRouteRoadFeature
+import com.roadpulse.auto.engine.GuidanceState
+import com.roadpulse.auto.engine.ManeuverType
 import com.roadpulse.auto.traffic.LaneTopologyWaySection
 import com.roadpulse.auto.traffic.RoadInfrastructureType
 import java.util.Locale
@@ -12,11 +14,25 @@ import com.google.android.libraries.mapsplatform.turnbyturn.model.LaneDirection.
 import com.google.android.libraries.mapsplatform.turnbyturn.model.Maneuver as GoogleManeuver
 
 /**
- * Combines Google's authoritative turn-by-turn feed with OSM signboard/lane enrichment into a
- * single [SignboardGuidance], gated through [SignboardFallbackLevel]. Google's route and
- * maneuver are never altered - OSM only adds destination text and lane-state detail alongside
- * them, and only when it can be matched with confidence. See THIRD_PARTY_DATA.md, "Google Maps
- * Platform compliance for OSM-enriched navigation display".
+ * Combines an authoritative turn-by-turn feed (Google's, or this project's own free-stack
+ * [GuidanceState]) with OSM signboard/lane enrichment into a single [SignboardGuidance], gated
+ * through [SignboardFallbackLevel]. The route and maneuver themselves are never altered - OSM
+ * only adds destination text and lane-state detail alongside them, and only when it can be
+ * matched with confidence. See THIRD_PARTY_DATA.md, "Google Maps Platform compliance for
+ * OSM-enriched navigation display".
+ *
+ * Two [build] overloads exist side by side: the original Google `NavInfo`-based one (still used
+ * by `RoadPulseNavigationScreen`, pending its own free-stack migration) and a `GuidanceState`
+ * one (used by the free-stack `NavigationActivity`). They differ in one structural way, not just
+ * a type swap: GraphHopper's `Instruction.sign` vocabulary (confirmed via `javap` against the
+ * real jar) has no "off-ramp"/"exit"/"fork" concept at all, unlike Google's
+ * `Maneuver.OFF_RAMP_RIGHT` etc. - so the `GuidanceState` overload can't replicate the original's
+ * "is this step an exit/merge maneuver" gate. Instead it gates primarily on whether an OSM
+ * `motorway_junction` point has been matched onto the upcoming route (`RouteRoadFeatureGuidance`,
+ * already independent of the routing engine), falling back to GraphHopper's own `KEEP_LEFT`/
+ * `KEEP_RIGHT` fork signal ([ManeuverType.FORK_LEFT]/[ManeuverType.FORK_RIGHT]) when there's no
+ * OSM match - which is honest about producing no rich panel data in that case, not an attempt to
+ * replicate Google's per-lane data (GraphHopper has none).
  */
 object SignboardGuidanceEngine {
     fun build(
@@ -83,9 +99,10 @@ object SignboardGuidanceEngine {
             if (useOsmJunction) nearestLaneWaySection(junctionFeature, laneTopologySections) else null
 
         val googleLanes = googleLaneGuidance(step, nowMillis)
+        val exitTokens = googleExitDirectionTokens(step.maneuver, isExit)
         val osmLanes =
             if (useOsmJunction && matchedWaySection != null) {
-                osmLaneGuidance(step, matchedWaySection, isExit, nowMillis)
+                osmLaneGuidance(exitTokens, matchedWaySection, nowMillis)
             } else {
                 null
             }
@@ -152,6 +169,90 @@ object SignboardGuidanceEngine {
         )
     }
 
+    /** Free-stack (GraphHopper) equivalent of the `NavInfo`-based [build] above - see this
+     * object's class doc for why the gating differs from the Google version. */
+    fun build(
+        guidanceState: GuidanceState,
+        upcomingRoadFeatures: List<UpcomingRouteRoadFeature>,
+        laneTopologySections: List<LaneTopologyWaySection>,
+        nowMillis: Long = System.currentTimeMillis(),
+    ): SignboardGuidance {
+        if (guidanceState.isRerouting || guidanceState.hasArrived) return SignboardGuidance.NONE
+        val step = guidanceState.currentStep ?: return SignboardGuidance.NONE
+        val distance = guidanceState.distanceToNextManeuverMeters ?: return SignboardGuidance.NONE
+        if (distance < 0 || distance > MAX_LOOKAHEAD_METERS) return SignboardGuidance.NONE
+
+        val junctionFeature =
+            upcomingRoadFeatures.firstOrNull { it.point.type == RoadInfrastructureType.MOTORWAY_JUNCTION }
+        val isForkOrRamp = step.maneuver == ManeuverType.FORK_LEFT || step.maneuver == ManeuverType.FORK_RIGHT
+        if (junctionFeature == null && !isForkOrRamp) {
+            // No junction/merge decision at this step, and no GraphHopper fork signal either -
+            // plain maneuver only. GraphHopper has no per-lane data of its own to fall back to
+            // (unlike the Google overload's `googleLaneGuidance`), so this is unconditionally
+            // STANDARD_MANEUVER rather than SIMPLE_LANE_ARROWS.
+            return SignboardGuidance.NONE
+        }
+
+        val junctionDistanceAgrees =
+            junctionFeature != null &&
+                kotlin.math.abs(junctionFeature.distanceMeters - distance) <=
+                maxOf(JUNCTION_DISTANCE_TOLERANCE_METERS, distance / 4.0)
+        val useOsmJunction = junctionFeature != null && junctionDistanceAgrees
+
+        val exitNumber = junctionFeature?.point?.exitNumber.takeIf { useOsmJunction }
+        val matchedWaySection =
+            if (useOsmJunction) nearestLaneWaySection(junctionFeature, laneTopologySections) else null
+
+        val exitTokens = graphHopperExitDirectionTokens(step.maneuver)
+        val laneGuidance =
+            matchedWaySection?.let { section -> osmLaneGuidance(exitTokens, section, nowMillis) }
+
+        val destination = junctionFeature?.point?.detail?.let(::extractTowardText)
+        val roadRef = matchedWaySection?.ref ?: step.roadName?.let(::extractRoadRef)
+        val panels =
+            buildSignboardPanels(
+                exitNumber = exitNumber,
+                destination = if (useOsmJunction) destination else null,
+                laneGuidance = laneGuidance,
+                roadRef = roadRef,
+            )
+
+        val source = if (useOsmJunction) GuidanceDataSource.OPENSTREETMAP else GuidanceDataSource.GRAPHHOPPER
+        val confidence =
+            when {
+                useOsmJunction && junctionFeature?.confidence == com.roadpulse.auto.driving.RouteMatchConfidence.HIGH ->
+                    GuidanceConfidence.HIGH
+                useOsmJunction -> GuidanceConfidence.MEDIUM
+                else -> GuidanceConfidence.LOW
+            }
+
+        val junction =
+            JunctionGuidance(
+                panels = panels,
+                laneGuidance = laneGuidance,
+                distanceMetersToJunction = distance,
+                source = source,
+                confidence = confidence,
+                timestampMillis = nowMillis,
+            )
+        val fallbackLevel = SignboardFallbackEngine.select(junction)
+        return SignboardGuidance(
+            junction = junction.takeIf { fallbackLevel != SignboardFallbackLevel.STANDARD_MANEUVER },
+            fallbackLevel = fallbackLevel,
+        )
+    }
+
+    /** [ManeuverType]-based equivalent of [googleExitDirectionTokens] - GraphHopper only
+     * distinguishes fork direction (see this object's class doc), so a non-fork maneuver at a
+     * matched OSM junction is treated as "through" rather than left/right, same as the Google
+     * overload's merge case. */
+    private fun graphHopperExitDirectionTokens(maneuver: ManeuverType): Set<String> =
+        when (maneuver) {
+            ManeuverType.FORK_RIGHT, ManeuverType.TURN_RIGHT, ManeuverType.TURN_SLIGHT_RIGHT -> setOf("right", "slight_right")
+            ManeuverType.FORK_LEFT, ManeuverType.TURN_LEFT, ManeuverType.TURN_SLIGHT_LEFT -> setOf("left", "slight_left")
+            else -> setOf("through")
+        }
+
     private fun buildSignboardPanels(
         exitNumber: String?,
         destination: String?,
@@ -215,20 +316,25 @@ object SignboardGuidanceEngine {
         return LaneGuidance(guidanceLanes, GuidanceDataSource.GOOGLE_NAVIGATION_SDK, GuidanceConfidence.HIGH, nowMillis)
     }
 
-    private fun osmLaneGuidance(
-        step: StepInfo,
-        matchedWaySection: LaneTopologyWaySection,
+    private fun googleExitDirectionTokens(
+        maneuver: Int,
         isExit: Boolean,
+    ): Set<String>? =
+        when {
+            maneuver in RIGHT_EXIT_MANEUVERS -> setOf("right", "slight_right", "sharp_right")
+            maneuver in LEFT_EXIT_MANEUVERS -> setOf("left", "slight_left", "sharp_left")
+            isExit -> null
+            else -> setOf("through")
+        }
+
+    /** Exit-direction tokens matching [LaneTopologyParser]'s `turn:lanes` vocabulary - shared by
+     * both `build` overloads, computed from whichever maneuver model the caller has (Google's or
+     * this project's own [com.roadpulse.auto.engine.ManeuverType]). */
+    private fun osmLaneGuidance(
+        exitTokens: Set<String>?,
+        matchedWaySection: LaneTopologyWaySection,
         nowMillis: Long,
     ): LaneGuidance? {
-        val exitTokens =
-            when {
-                step.maneuver in RIGHT_EXIT_MANEUVERS -> setOf("right", "slight_right", "sharp_right")
-                step.maneuver in LEFT_EXIT_MANEUVERS -> setOf("left", "slight_left", "sharp_left")
-                isExit -> null
-                else -> setOf("through")
-            }
-
         val laneCount = matchedWaySection.lanes?.trim()?.toIntOrNull()
         return LaneTopologyParser.resolve(
             turnLanes = matchedWaySection.turnLanes,

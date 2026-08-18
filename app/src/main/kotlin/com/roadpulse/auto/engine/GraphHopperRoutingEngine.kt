@@ -137,6 +137,16 @@ class GraphHopperRoutingEngine(
             distanceMeters = instruction.distance.toInt(),
         )
 
+    /**
+     * The full sign vocabulary, confirmed via `javap` against the real 7.0 jar (not guessed) -
+     * critically, GraphHopper has no distinct "off-ramp"/"exit"/"fork" sign at all. Motorway
+     * exits surface only as `KEEP_LEFT`/`KEEP_RIGHT` (a fork/branch decision) or an ordinary
+     * turn, indistinguishable at this level from a regular street turn - unlike Google's
+     * `Maneuver.OFF_RAMP_RIGHT` etc. `KEEP_LEFT`/`KEEP_RIGHT` map to [ManeuverType.FORK_LEFT]/
+     * [ManeuverType.FORK_RIGHT] as the closest real signal; see `SignboardGuidanceEngine`'s
+     * GraphHopper-facing `build` overload for how exit/junction detection actually works instead
+     * (OSM `motorway_junction` matching via `RouteRoadFeatureGuidance`, not the routing engine).
+     */
     private fun Int.toManeuverType(): ManeuverType =
         when (this) {
             Instruction.CONTINUE_ON_STREET -> ManeuverType.STRAIGHT
@@ -146,8 +156,10 @@ class GraphHopperRoutingEngine(
             Instruction.TURN_SLIGHT_RIGHT -> ManeuverType.TURN_SLIGHT_RIGHT
             Instruction.TURN_SHARP_LEFT -> ManeuverType.TURN_SHARP_LEFT
             Instruction.TURN_SHARP_RIGHT -> ManeuverType.TURN_SHARP_RIGHT
+            Instruction.KEEP_LEFT -> ManeuverType.FORK_LEFT
+            Instruction.KEEP_RIGHT -> ManeuverType.FORK_RIGHT
             Instruction.U_TURN_LEFT, Instruction.U_TURN_RIGHT, Instruction.U_TURN_UNKNOWN -> ManeuverType.U_TURN
-            Instruction.USE_ROUNDABOUT -> ManeuverType.ROUNDABOUT
+            Instruction.USE_ROUNDABOUT, Instruction.LEAVE_ROUNDABOUT -> ManeuverType.ROUNDABOUT
             Instruction.FINISH, Instruction.REACHED_VIA -> ManeuverType.DESTINATION
             else -> ManeuverType.UNKNOWN
         }
