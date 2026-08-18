@@ -9,6 +9,10 @@ import com.google.android.libraries.navigation.Navigator
 import com.google.android.libraries.navigation.RoutingOptions
 import com.google.android.libraries.navigation.Waypoint
 import com.roadpulse.auto.driving.RouteCameraAnalyzer
+import com.roadpulse.auto.engine.Route
+import com.roadpulse.auto.engine.RouteCalculationException
+import com.roadpulse.auto.engine.RouteRequestStatus
+import com.roadpulse.auto.engine.RoutingEngine
 import com.roadpulse.auto.quota.GoogleUsageGuard
 import com.roadpulse.auto.quota.QuotaDecision
 import com.roadpulse.auto.traffic.RoadCoordinate
@@ -62,7 +66,7 @@ class RouteStopOptimizer(
             }
 
             searchStops(
-                routePoints = routePoints,
+                geometry = routePoints.map { RoadCoordinate(it.latitude, it.longitude) },
                 directMeters = directMeters,
                 directSeconds = directSeconds,
                 enabled = enabled,
@@ -133,13 +137,116 @@ class RouteStopOptimizer(
         }
     }
 
+    /** Free-stack equivalent of the `Navigator`-based [setRoute] above, backed by a
+     * [RoutingEngine] (GraphHopper) instead of Google's `Navigator.setDestination(s)`. No usage
+     * quota applies - GraphHopper routing is on-device and unmetered. */
+    fun setRoute(
+        routingEngine: RoutingEngine,
+        origin: RoadCoordinate,
+        destination: RoadCoordinate,
+        avoidHighways: Boolean,
+        onProgress: (String) -> Unit = {},
+        onComplete: (FreeRouteStopPlan) -> Unit,
+    ) {
+        val enabled = preferences.load()
+
+        fun complete(plan: FreeRouteStopPlan) = mainHandler.post { onComplete(plan) }
+
+        fun statusOf(error: Throwable): RouteRequestStatus =
+            (error as? RouteCalculationException)?.status
+                ?: (error.cause as? RouteCalculationException)?.status
+                ?: RouteRequestStatus.UNKNOWN_ERROR
+
+        if (!enabled.hasEnabledStop) {
+            routingEngine.calculateRoute(origin, destination, avoidHighways = avoidHighways).whenComplete { routes, error ->
+                if (error != null) {
+                    complete(FreeRouteStopPlan(route = null, status = statusOf(error)))
+                } else {
+                    val route = routes.firstOrNull()
+                    complete(
+                        if (route != null) {
+                            FreeRouteStopPlan(route = route, status = RouteRequestStatus.OK)
+                        } else {
+                            FreeRouteStopPlan(route = null, status = RouteRequestStatus.NO_ROUTE_FOUND)
+                        },
+                    )
+                }
+            }
+            return
+        }
+
+        onProgress("Calculating the direct route before optimizing stops…")
+        routingEngine.calculateRoute(origin, destination, avoidHighways = avoidHighways).whenComplete { routes, error ->
+            if (error != null) {
+                complete(FreeRouteStopPlan(route = null, status = statusOf(error)))
+                return@whenComplete
+            }
+            val direct = routes.firstOrNull()
+            if (direct == null) {
+                complete(FreeRouteStopPlan(route = null, status = RouteRequestStatus.NO_ROUTE_FOUND))
+                return@whenComplete
+            }
+            if (direct.geometry.size < 2) {
+                complete(
+                    FreeRouteStopPlan(
+                        route = direct,
+                        status = RouteRequestStatus.OK,
+                        note = "Direct route used because its route line was unavailable.",
+                    ),
+                )
+                return@whenComplete
+            }
+
+            searchStops(
+                geometry = direct.geometry,
+                directMeters = direct.distanceMeters,
+                directSeconds = direct.durationSeconds,
+                enabled = enabled,
+                onProgress = onProgress,
+            ) { selections, note ->
+                if (selections.isEmpty()) {
+                    onComplete(FreeRouteStopPlan(route = direct, status = RouteRequestStatus.OK, note = note))
+                    return@searchStops
+                }
+
+                val sortedSelections = selections.sortedBy { it.metersFromRouteOrigin }
+                val stopCoordinates = sortedSelections.map { it.coordinate }
+                onProgress("Building the route with ${stopCoordinates.size} optimized stop(s)…")
+                routingEngine
+                    .calculateRoute(origin, destination, waypoints = stopCoordinates, avoidHighways = avoidHighways)
+                    .whenComplete { optimizedRoutes, optimizedError ->
+                        val optimizedRoute = optimizedRoutes?.firstOrNull()
+                        if (optimizedError == null && optimizedRoute != null) {
+                            complete(
+                                FreeRouteStopPlan(
+                                    route = optimizedRoute,
+                                    status = RouteRequestStatus.OK,
+                                    stops = sortedSelections,
+                                    note = note,
+                                ),
+                            )
+                        } else {
+                            // Preserve useful navigation even if an intermediate stop cannot route.
+                            complete(
+                                FreeRouteStopPlan(
+                                    route = direct,
+                                    status = RouteRequestStatus.OK,
+                                    note = "The optimized stop route was unavailable; using the direct route.",
+                                ),
+                            )
+                        }
+                    }
+            }
+        }
+    }
+
     /**
      * Runs the free OpenStreetMap corridor search off the main thread: a single
      * Overpass query covers every enabled category, replacing what used to be one
      * paid Google Places "search along route" call per category.
      */
     private fun searchStops(
-        routePoints: List<LatLng>,
+        geometry: List<RoadCoordinate>,
         directMeters: Int,
         directSeconds: Int,
         enabled: RouteStopPreferences,
@@ -160,7 +267,6 @@ class RouteStopOptimizer(
             return
         }
 
-        val geometry = routePoints.map { RoadCoordinate(it.latitude, it.longitude) }
         if (geometry.size < 2) {
             onComplete(emptyList(), "Stops skipped because the route line was unavailable.")
             return
@@ -380,6 +486,23 @@ data class OptimizedRouteStop(
 
 data class RouteStopPlan(
     val status: Navigator.RouteStatus,
+    val stops: List<OptimizedRouteStop> = emptyList(),
+    val note: String? = null,
+) {
+    fun summary(): String? =
+        when {
+            stops.isNotEmpty() -> stops.joinToString("\n") { it.summary() }
+            !note.isNullOrBlank() -> note
+            else -> null
+        }
+}
+
+/** Free-stack equivalent of [RouteStopPlan], carrying the actual [Route] (needed to start
+ * [com.roadpulse.auto.engine.GuidanceEngine] guidance) instead of relying on a side-effected
+ * `Navigator` instance. */
+data class FreeRouteStopPlan(
+    val route: Route?,
+    val status: RouteRequestStatus,
     val stops: List<OptimizedRouteStop> = emptyList(),
     val note: String? = null,
 ) {
