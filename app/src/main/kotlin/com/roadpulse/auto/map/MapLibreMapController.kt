@@ -133,6 +133,30 @@ class MapLibreMapController(
 
     fun cameraTarget(): RoadCoordinate? = map.cameraPosition.target?.toRoadCoordinate()
 
+    /** Pans the camera by a raw screen-pixel delta - for `SurfaceCallback.onScroll` (Android
+     * Auto's touchpad/rotary pan gesture). MapLibre's `CameraUpdateFactory` has no direct
+     * pixel-scroll update (unlike Google's `CameraUpdateFactory.scrollBy`), so this converts the
+     * current camera target to a screen point, offsets it, and converts back. */
+    fun scrollBy(
+        dxPixels: Float,
+        dyPixels: Float,
+    ) {
+        val target = map.cameraPosition.target ?: return
+        val screenPoint = map.projection.toScreenLocation(target)
+        val newTarget = map.projection.fromScreenLocation(PointF(screenPoint.x + dxPixels, screenPoint.y + dyPixels))
+        map.moveCamera(CameraUpdateFactory.newLatLng(newTarget))
+    }
+
+    /** Zooms the camera by a relative delta around a screen focus point - for
+     * `SurfaceCallback.onScale` (Android Auto's pinch gesture). */
+    fun zoomBy(
+        delta: Double,
+        focusXPixels: Int,
+        focusYPixels: Int,
+    ) {
+        map.animateCamera(CameraUpdateFactory.zoomBy(delta, android.graphics.Point(focusXPixels, focusYPixels)))
+    }
+
     fun moveCameraTo(
         coordinate: RoadCoordinate,
         zoom: Double,

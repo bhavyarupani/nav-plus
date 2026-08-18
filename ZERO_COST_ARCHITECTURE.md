@@ -288,9 +288,45 @@ correctly detected the device was off-route and surfaced "Rerouting…" without 
 off-route detection and its failure-handling path both work correctly on real hardware. No
 Google Maps/Navigation SDK code remains reachable from this file.
 
-**`RoadPulseNavigationScreen`** (the Android Auto screen) is the one remaining screen still on
-Google Navigation SDK - see "Cross-cutting observations" from the pre-migration investigation for
-why it's expected to follow the same pattern as `NavigationActivity` (it shares the same
-`SignboardGuidanceEngine`/`MapMarkerIconFactory`/guidance-singleton overloads already built,
-requiring an Android-Auto-specific map/surface integration on top). The working Google
-implementation on `main` is untouched throughout.
+**Resolved for `RoadPulseNavigationScreen`.** The Android Auto screen - the last of the three
+Google-based screens - now runs entirely on the free stack, following the pattern predicted in the
+pre-migration investigation:
+- `GraphHopperRoutingEngine`/`GraphHopperGuidanceEngine`/`VoiceGuidance` replace `Navigator` and
+  its built-in audio guidance, exactly as in `NavigationActivity` - but with their own independent
+  instances rather than sharing `NavigationActivity`'s, matching the pre-migration code's own
+  independence (it separately acquired its own Google `Navigator` session) and the fact that the
+  phone and car screens are used alternatively, not concurrently.
+- The `VirtualDisplay`/`Presentation` the screen renders into now hosts a raw MapLibre `MapView`
+  (given the same manual `onCreate`/`onStart`/`onResume` → `onPause`/`onStop`/`onDestroy` lifecycle
+  treatment `NavigationViewForAuto` needed) plus the existing `SpeedComplianceRingView` overlay in
+  a plain `FrameLayout`, backed by the same `LocalMbtilesServer`/`MapLibreMapController` pipeline
+  as the other two screens.
+- `SurfaceCallback.onScroll`/`onScale` (the car's touchpad/rotary pan and pinch-zoom gestures) now
+  drive two new `MapLibreMapController` methods, `scrollBy`/`zoomBy` - MapLibre's
+  `CameraUpdateFactory` has no direct pixel-scroll equivalent to Google's, so `scrollBy` converts
+  the camera target to a screen point via `Projection`, offsets it, and converts back.
+- `AndroidAutoRoutingInfoFactory` and `SignboardGuidanceEngine` reuse the `GuidanceState`-based
+  overloads already built for `NavigationActivity`, including a new `ManeuverStep.toCarManeuver()`
+  mapping to the real `androidx.car.app.navigation.model.Maneuver` `TYPE_*` constants (confirmed
+  via `javap` against the real `androidx.car.app:app:1.7.0` jar).
+- The 4 route-intelligence singletons and `RouteStopOptimizer` reuse their `Route`-based overloads
+  from the `NavigationActivity` work.
+
+Verified by `ktlintFormat` + `ktlintCheck`/`compileDebugKotlin`/`testDebugUnitTest`/`lintDebug`, all
+clean. Live, on-car verification via Android Auto's Desktop Head Unit (DHU) was attempted but is
+blocked by tooling, not app code: the SDK's bundled DHU binary is a 2022-03-30 build (SDK "extras"
+revision 2.0 - confirmed via `sdkmanager` to be the newest Google has ever published), while the
+Pixel 6 Pro's installed Android Auto app is version 17.3.662854 (`targetSdk 37`), a multi-year
+protocol gap. Two real prerequisites were found and fixed along the way - Android Auto's hidden
+"Unknown sources" developer flag was off, and its head-unit server needs to be started explicitly
+via the app's own overflow menu - but DHU still gets killed by the phone within ~1 second of every
+connection attempt (headless or windowed, before and after those fixes), with no error logged: the
+signature of a protocol handshake rejection, not a fixable setting. This is a known limitation of
+the DHU tooling itself, not of the migrated code - `RoadPulseNavigationScreen` reaches the same
+build/lint/unit-test bar every other file in this migration was held to before commit.
+
+No Google Maps/Navigation/Places SDK code remains reachable from any of the three screens
+(`MainActivity`, `NavigationActivity`, `RoadPulseNavigationScreen`). The working Google
+implementation on `main` is untouched throughout. Remaining work is final cleanup: removing the
+now-unreachable Google-based overloads and the Google Maps/Navigation/Places Gradle dependencies
+themselves.
