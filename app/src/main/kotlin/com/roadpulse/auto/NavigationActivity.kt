@@ -2,6 +2,9 @@ package com.roadpulse.auto
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Bundle
 import android.view.View
 import android.widget.Button
@@ -11,18 +14,6 @@ import android.widget.Toast
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.fragment.app.FragmentActivity
-import com.google.android.gms.maps.GoogleMap
-import com.google.android.gms.maps.GoogleMap.CameraPerspective
-import com.google.android.gms.maps.model.BitmapDescriptorFactory
-import com.google.android.gms.maps.model.LatLng
-import com.google.android.gms.maps.model.Marker
-import com.google.android.gms.maps.model.MarkerOptions
-import com.google.android.libraries.navigation.NavigationApi
-import com.google.android.libraries.navigation.Navigator
-import com.google.android.libraries.navigation.PromptVisibilityChangedListener
-import com.google.android.libraries.navigation.RoutingOptions
-import com.google.android.libraries.navigation.SupportNavigationFragment
-import com.google.android.libraries.navigation.Waypoint
 import com.roadpulse.auto.destination.SelectedDestinationStore
 import com.roadpulse.auto.driving.DrivingAttention
 import com.roadpulse.auto.driving.RoadAheadEventType
@@ -34,26 +25,59 @@ import com.roadpulse.auto.driving.SpeedLimitAheadGuidance
 import com.roadpulse.auto.driving.SpeedLimitAheadSummary
 import com.roadpulse.auto.driving.UpcomingRouteCamera
 import com.roadpulse.auto.driving.UpcomingRouteRoadFeature
+import com.roadpulse.auto.engine.GraphHopperGuidanceEngine
+import com.roadpulse.auto.engine.GraphHopperRoutingEngine
+import com.roadpulse.auto.engine.GuidanceState
+import com.roadpulse.auto.engine.Route
+import com.roadpulse.auto.map.MapLibreMapController
+import com.roadpulse.auto.map.MapMarker
 import com.roadpulse.auto.map.MapMarkerIconFactory
-import com.roadpulse.auto.map.RoadPulseMapTheme
-import com.roadpulse.auto.navigation.LaneGuidance
-import com.roadpulse.auto.navigation.TurnByTurnState
-import com.roadpulse.auto.quota.GoogleUsageGuard
-import com.roadpulse.auto.quota.QuotaDecision
+import com.roadpulse.auto.map.MapPolyline
+import com.roadpulse.auto.map.RoadPulseMapLibreStyle
 import com.roadpulse.auto.settings.DisplayFilterStore
 import com.roadpulse.auto.settings.DisplayLayer
 import com.roadpulse.auto.settings.DrivingContext
 import com.roadpulse.auto.settings.RoadSignFilterStore
 import com.roadpulse.auto.settings.RouteStyle
 import com.roadpulse.auto.settings.RouteStylePreferencesStore
+import com.roadpulse.auto.signage.SignboardGuidanceEngine
+import com.roadpulse.auto.signage.SignboardRenderer
 import com.roadpulse.auto.stops.RouteStopOptimizer
 import com.roadpulse.auto.terrain.ElevationProfileSummary
 import com.roadpulse.auto.terrain.TerrainGuidance
+import com.roadpulse.auto.traffic.RoadCoordinate
+import com.roadpulse.auto.voice.VoiceGuidance
+import org.maplibre.android.MapLibre
+import org.maplibre.android.maps.MapView
+import org.maplibre.android.maps.Style
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.CompletableFuture
 
+/**
+ * Free-stack turn-by-turn navigation: GraphHopper routing + on-device guidance (map-matching,
+ * ETA, off-route detection - [GraphHopperGuidanceEngine]), MapLibre rendering, and Android
+ * `TextToSpeech` voice prompts ([VoiceGuidance]), replacing Google Navigation SDK's `Navigator`
+ * entirely. See ZERO_COST_ARCHITECTURE.md.
+ *
+ * Route-line/puck rendering and GPS-driven guidance had no existing app code to port - Google's
+ * `SupportNavigationFragment` drew all of that internally. This class owns GPS updates directly
+ * via `LocationManager` (`Navigator` previously did this itself), feeding every fix to the
+ * guidance engine, the map's location puck, and the camera.
+ */
 class NavigationActivity : FragmentActivity() {
-    private var navigator: Navigator? = null
+    private lateinit var mapView: MapView
+    private var tileServer: com.roadpulse.auto.engine.LocalMbtilesServer? = null
+    private var mapController: MapLibreMapController? = null
+    private var routePolyline: MapPolyline? = null
+    private var destinationMarker: MapMarker? = null
+    private var locationManager: LocationManager? = null
+    private var locationProvider: String? = null
+    private lateinit var voiceGuidance: VoiceGuidance
+    private val routingEngine by lazy { GraphHopperRoutingEngine(applicationContext) }
+    private val guidanceEngine by lazy { GraphHopperGuidanceEngine(routingEngine) }
+    private var activeRoute: Route? = null
+
     private lateinit var status: TextView
     private lateinit var lanePanel: View
     private lateinit var laneStatus: TextView
@@ -69,11 +93,9 @@ class NavigationActivity : FragmentActivity() {
     private var latestRoadFeatures: List<UpcomingRouteRoadFeature> = emptyList()
     private var latestCameraSnapshot = RouteCameraSnapshot()
     private var maneuverDistanceMeters: Int? = null
-    private var navigationMap: GoogleMap? = null
-    private var navigationFragment: SupportNavigationFragment? = null
-    private val routeRoadFeatureMarkers = mutableListOf<Marker>()
+    private val routeRoadFeatureMarkers = mutableListOf<MapMarker>()
     private var routeRoadFeatureMarkerIds: List<String> = emptyList()
-    private val routeCameraMarkers = mutableListOf<Marker>()
+    private val routeCameraMarkers = mutableListOf<MapMarker>()
     private var routeCameraMarkerIds: List<String> = emptyList()
     private val mapMarkerIcons by lazy { MapMarkerIconFactory(this) }
     private val destination by lazy { SelectedDestinationStore(this).load() }
@@ -81,42 +103,38 @@ class NavigationActivity : FragmentActivity() {
     private val routeStopOptimizer by lazy { RouteStopOptimizer(this) }
     private val displayFilters by lazy { DisplayFilterStore(this) }
     private val roadSignFilters by lazy { RoadSignFilterStore(this) }
-    private val arrivalListener =
-        Navigator.ArrivalListener { event ->
-            if (!event.isFinalDestination) {
-                navigator?.continueToNextDestination()
-                runOnUiThread {
-                    status.text = "Stop reached: ${event.waypoint.title}. Continuing to the next destination."
-                }
-            }
-        }
-    private val laneListener: (com.google.android.libraries.mapsplatform.turnbyturn.model.NavInfo) -> Unit =
-        { navInfo ->
-            if (displayFilters.isEnabled(DrivingContext.DRIVING, DisplayLayer.LANE_GUIDANCE)) {
-                renderLaneAndSignboardPanel(navInfo)
-            } else {
-                lanePanel.visibility = View.GONE
-            }
-            maneuverDistanceMeters = navInfo.distanceToCurrentStepMeters
+
+    private val locationListener =
+        LocationListener { location -> onLocationUpdate(location) }
+
+    private val guidanceListener: (GuidanceState) -> Unit = { state ->
+        runOnUiThread {
+            voiceGuidance.onGuidanceState(state)
+            maneuverDistanceMeters = state.distanceToNextManeuverMeters
             renderRoadAhead()
-            navigator?.let { refreshRouteIntelligence(it, force = false) }
+            renderLaneAndSignboardPanel(state)
+            updateTripProgress(state)
+            activeRoute?.let { refreshRouteIntelligence(it, force = false) }
         }
+    }
 
     /**
      * Prefers RoadPulse's own signboard rendering (Autobahn exit + destinations + lane states)
-     * when [com.roadpulse.auto.signage.SignboardGuidanceEngine] has reliable enough data for it;
-     * otherwise falls back to Google's own generated lane bitmap and text summary, which is
-     * always safe to show verbatim. Never mixes the two in one image.
+     * when [SignboardGuidanceEngine] has reliable enough data for it. Unlike the Google-based
+     * version this replaces, there is no per-lane bitmap/text fallback to fall back to -
+     * GraphHopper has no per-lane data of its own (see `SignboardGuidanceEngine`'s
+     * `GuidanceState`-based `build` overload) - so the lane panel simply hides when there's
+     * nothing reliable to show, rather than showing degraded Google content that no longer exists.
      */
-    private fun renderLaneAndSignboardPanel(navInfo: com.google.android.libraries.mapsplatform.turnbyturn.model.NavInfo) {
+    private fun renderLaneAndSignboardPanel(state: GuidanceState) {
         val signboardGuidance =
-            com.roadpulse.auto.signage.SignboardGuidanceEngine.build(
-                navInfo,
+            SignboardGuidanceEngine.build(
+                state,
                 latestRoadFeatures,
                 RouteRoadFeatureGuidance.latestLaneTopologySections,
             )
         val signboardBitmap =
-            com.roadpulse.auto.signage.SignboardRenderer.render(
+            SignboardRenderer.render(
                 this,
                 signboardGuidance,
                 signboardWidthPx(),
@@ -138,17 +156,12 @@ class NavigationActivity : FragmentActivity() {
                         ?.destinations
                         ?.firstOrNull()
                         ?.text,
-                ).joinToString(" · ").ifBlank { LaneGuidance.summary(navInfo) }
+                ).joinToString(" · ").ifBlank { state.currentStep?.instructionText.orEmpty() }
             laneImage.visibility = View.VISIBLE
             laneImage.setImageBitmap(signboardBitmap)
-            return
+        } else {
+            lanePanel.visibility = View.GONE
         }
-        val lanes = navInfo.currentStep?.lanes.orEmpty()
-        lanePanel.visibility = if (lanes.isEmpty()) View.GONE else View.VISIBLE
-        laneStatus.text = LaneGuidance.summary(navInfo)
-        val laneBitmap = navInfo.currentStep?.lanesBitmap
-        laneImage.visibility = if (laneBitmap == null) View.GONE else View.VISIBLE
-        laneImage.setImageBitmap(laneBitmap)
     }
 
     private fun signboardWidthPx(): Int = resources.displayMetrics.widthPixels.coerceAtMost(MAX_SIGNBOARD_WIDTH_PX)
@@ -201,24 +214,6 @@ class NavigationActivity : FragmentActivity() {
         )
     }
 
-    private val routeChangedListener =
-        Navigator.RouteChangedListener {
-            navigator?.let { refreshRouteIntelligence(it, force = true) }
-            updateTripProgress()
-        }
-    private val tripProgressListener =
-        Navigator.RemainingTimeOrDistanceChangedListener {
-            runOnUiThread(::updateTripProgress)
-        }
-    private val promptVisibilityListener =
-        PromptVisibilityChangedListener { promptVisible ->
-            runOnUiThread {
-                if (::roadAheadPanel.isInitialized) {
-                    roadAheadPanel.visibility = if (promptVisible) View.INVISIBLE else View.VISIBLE
-                }
-            }
-        }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_navigation)
@@ -227,6 +222,7 @@ class NavigationActivity : FragmentActivity() {
             RouteRoadFeatureGuidance.clear()
             RouteCameraGuidance.clear()
         }
+        voiceGuidance = VoiceGuidance(this)
         status = findViewById(R.id.navigation_status)
         lanePanel = findViewById(R.id.lane_guidance_panel)
         laneStatus = findViewById(R.id.lane_guidance_status)
@@ -246,26 +242,61 @@ class NavigationActivity : FragmentActivity() {
         }
         renderRoadAhead()
         findViewById<Button>(R.id.stop_navigation).setOnClickListener {
-            navigator?.stopGuidance()
+            stopNavigating()
             finish()
         }
 
+        MapLibre.getInstance(this)
+        mapView = findViewById(R.id.navigation_map_view)
+        mapView.onCreate(savedInstanceState)
+
         val selected = destination
-        if (selected == null) {
+        if (selected == null || selected.latitude == null || selected.longitude == null) {
             showStatus("Choose a destination on the My Maps home screen first.")
             return
         }
         status.text = "Preparing route to ${selected.title}…"
+        setupMap()
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
-            initializeNavigation()
+            startLocationUpdates()
         } else {
             requestPermissions(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION), LOCATION_PERMISSION_REQUEST)
         }
     }
 
+    private fun setupMap() {
+        CompletableFuture
+            .supplyAsync {
+                com.roadpulse.auto.engine
+                    .LocalMbtilesServer(applicationContext, "bremen.mbtiles")
+                    .apply { start() }
+            }.thenAccept { server ->
+                tileServer = server
+                runOnUiThread { loadMap(server.port) }
+            }
+    }
+
+    private fun loadMap(port: Int) {
+        val styleJson = RoadPulseMapLibreStyle.styleJson(this, port)
+        mapView.getMapAsync { map ->
+            map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
+                val controller = MapLibreMapController(mapView, map, style)
+                mapController = controller
+                activeRoute?.let(::drawRoutePolyline)
+                showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
+                showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
+                controller.setOnCameraIdleListener {
+                    showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
+                    showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
+                }
+            }
+        }
+    }
+
     override fun onStart() {
         super.onStart()
-        TurnByTurnState.addListener(laneListener)
+        mapView.onStart()
+        guidanceEngine.addListener(guidanceListener)
         TerrainGuidance.addListener(terrainListener)
         SpeedLimitAheadGuidance.addListener(speedLimitAheadListener)
         RouteRoadFeatureGuidance.addListener(routeRoadFeatureListener)
@@ -273,14 +304,30 @@ class NavigationActivity : FragmentActivity() {
         registerDebugSpeedComplianceSimulator()
     }
 
+    override fun onResume() {
+        super.onResume()
+        mapView.onResume()
+    }
+
+    override fun onPause() {
+        mapView.onPause()
+        super.onPause()
+    }
+
     override fun onStop() {
-        TurnByTurnState.removeListener(laneListener)
+        mapView.onStop()
+        guidanceEngine.removeListener(guidanceListener)
         TerrainGuidance.removeListener(terrainListener)
         SpeedLimitAheadGuidance.removeListener(speedLimitAheadListener)
         RouteRoadFeatureGuidance.removeListener(routeRoadFeatureListener)
         RouteCameraGuidance.removeListener(routeCameraListener)
         unregisterDebugSpeedComplianceSimulator()
         super.onStop()
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        mapView.onLowMemory()
     }
 
     /**
@@ -333,6 +380,7 @@ class NavigationActivity : FragmentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(STATE_ROUTE_REQUEST_ISSUED, routeRequestIssued)
         super.onSaveInstanceState(outState)
+        if (::mapView.isInitialized) mapView.onSaveInstanceState(outState)
     }
 
     override fun onRequestPermissionsResult(
@@ -343,147 +391,142 @@ class NavigationActivity : FragmentActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode != LOCATION_PERMISSION_REQUEST) return
         if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
-            initializeNavigation()
+            startLocationUpdates()
         } else {
             showStatus("Location permission is required for navigation.")
         }
     }
 
-    private fun initializeNavigation() {
-        NavigationApi.getNavigator(
-            this,
-            object : NavigationApi.NavigatorListener {
-                override fun onNavigatorReady(readyNavigator: Navigator) {
-                    navigator = readyNavigator
-                    readyNavigator.addArrivalListener(arrivalListener)
-                    readyNavigator.removeRouteChangedListener(routeChangedListener)
-                    readyNavigator.addRouteChangedListener(routeChangedListener)
-                    readyNavigator.removeRemainingTimeOrDistanceChangedListener(tripProgressListener)
-                    readyNavigator.addRemainingTimeOrDistanceChangedListener(
-                        30,
-                        100,
-                        tripProgressListener,
-                    )
-                    LaneGuidance.register(this@NavigationActivity, readyNavigator)
-                    val fragment =
-                        supportFragmentManager.findFragmentById(R.id.navigation_fragment)
-                            as SupportNavigationFragment
-                    navigationFragment = fragment
-                    fragment.removePromptVisibilityChangedListener(promptVisibilityListener)
-                    fragment.addPromptVisibilityChangedListener(promptVisibilityListener)
-                    fragment.setSpeedLimitIconEnabled(true)
-                    fragment.setSpeedometerEnabled(true)
-                    fragment.setEtaCardEnabled(false)
-                    if (
-                        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
-                        PackageManager.PERMISSION_GRANTED
-                    ) {
-                        fragment.getMapAsync { map ->
-                            navigationMap = map
-                            RoadPulseMapTheme.apply(this@NavigationActivity, map)
-                            map.followMyLocation(CameraPerspective.TILTED)
-                            showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
-                            showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
-                            map.setOnCameraIdleListener {
-                                showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
-                                showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
-                            }
-                        }
-                    }
-                    calculateRoute(readyNavigator)
-                }
-
-                override fun onError(errorCode: Int) {
-                    val message =
-                        when (errorCode) {
-                            NavigationApi.ErrorCode.NOT_AUTHORIZED ->
-                                "Google Navigation is not authorized for this app key."
-                            NavigationApi.ErrorCode.TERMS_NOT_ACCEPTED ->
-                                "Accept the Google Navigation terms to continue."
-                            NavigationApi.ErrorCode.NETWORK_ERROR ->
-                                "A network error prevented Navigation from starting."
-                            NavigationApi.ErrorCode.LOCATION_PERMISSION_MISSING ->
-                                "Location permission is required for navigation."
-                            else -> "Google Navigation could not start (error $errorCode)."
-                        }
-                    showStatus(message)
-                }
-            },
-        )
-    }
-
-    private fun calculateRoute(readyNavigator: Navigator) {
-        if (routeRequestIssued) {
-            status.text = destination?.let { "Navigation active for ${it.title}" }
-                ?: "Navigation active"
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun startLocationUpdates() {
+        val manager = getSystemService(LocationManager::class.java)
+        locationManager = manager
+        val provider =
+            when {
+                manager.isProviderEnabled(LocationManager.GPS_PROVIDER) -> LocationManager.GPS_PROVIDER
+                manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER) -> LocationManager.NETWORK_PROVIDER
+                else -> null
+            }
+        if (provider == null) {
+            showStatus("Turn on phone location to navigate.")
             return
         }
-        val selected = destination ?: return
-        val waypoint =
-            runCatching {
-                val builder = Waypoint.builder().setTitle(selected.title)
-                // Prefer coordinates (always present for offline-search-sourced destinations,
-                // which have no Google place ID) - only Google-Places-sourced destinations from
-                // before the free-stack search migration would lack them.
-                if (selected.latitude != null && selected.longitude != null) {
-                    builder.setLatLng(selected.latitude, selected.longitude)
-                } else {
-                    builder.setPlaceIdString(selected.placeId)
-                }
-                builder.build()
-            }.getOrElse {
-                showStatus("This selected place cannot be used as a driving destination.")
-                return
-            }
-        val routingOptions =
-            RoutingOptions().apply {
-                travelMode(RoutingOptions.TravelMode.DRIVING)
-                avoidHighways(RouteStylePreferencesStore(this@NavigationActivity).load() == RouteStyle.SCENIC)
-            }
-        when (GoogleUsageGuard(this).navigationDestinations.tryConsume()) {
-            is QuotaDecision.Blocked -> {
-                showStatus("The 1,000-destination monthly safety limit is reached.")
-                return
-            }
-            is QuotaDecision.Allowed -> routeRequestIssued = true
+        locationProvider = provider
+        manager.getLastKnownLocation(provider)?.let(::onLocationUpdate)
+        manager.requestLocationUpdates(provider, LOCATION_UPDATE_INTERVAL_MILLIS, LOCATION_UPDATE_MIN_METERS, locationListener)
+    }
+
+    private fun onLocationUpdate(location: Location) {
+        val coordinate = RoadCoordinate(location.latitude, location.longitude)
+        guidanceEngine.onLocationUpdate(
+            coordinate,
+            speedKph = if (location.hasSpeed()) location.speed * 3.6f else null,
+            bearingDegrees = if (location.hasBearing()) location.bearing else null,
+        )
+        val controller = mapController
+        if (controller != null) {
+            controller.registerIcon(MY_LOCATION_ICON_ID, myLocationPuckBitmap())
+            controller.setMyLocationPuck(coordinate, location.bearing, MY_LOCATION_ICON_ID)
+            controller.animateCameraTo(coordinate, DRIVING_ZOOM)
         }
+        if (!routeRequestIssued) calculateRoute(coordinate)
+    }
+
+    private fun myLocationPuckBitmap(): android.graphics.Bitmap {
+        val size = (24 * resources.displayMetrics.density).toInt()
+        val bitmap = androidx.core.graphics.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        paint.style = android.graphics.Paint.Style.FILL
+        paint.color = android.graphics.Color.rgb(33, 150, 243)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - (4 * resources.displayMetrics.density), paint)
+        paint.style = android.graphics.Paint.Style.STROKE
+        paint.strokeWidth = 2 * resources.displayMetrics.density
+        paint.color = android.graphics.Color.WHITE
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - (4 * resources.displayMetrics.density), paint)
+        return bitmap
+    }
+
+    private fun calculateRoute(origin: RoadCoordinate) {
+        if (routeRequestIssued) return
+        val selected = destination ?: return
+        val destinationLatitude = selected.latitude ?: return
+        val destinationLongitude = selected.longitude ?: return
+        val destCoordinate = RoadCoordinate(destinationLatitude, destinationLongitude)
+        routeRequestIssued = true
+        val avoidHighways = RouteStylePreferencesStore(this).load() == RouteStyle.SCENIC
         routeStopOptimizer.setRoute(
-            navigator = readyNavigator,
-            finalDestination = waypoint,
-            routingOptions = routingOptions,
+            routingEngine = routingEngine,
+            origin = origin,
+            destination = destCoordinate,
+            avoidHighways = avoidHighways,
             onProgress = { message -> runOnUiThread { status.text = message } },
         ) { plan ->
             runOnUiThread {
-                if (plan.status == Navigator.RouteStatus.OK) {
-                    readyNavigator.setAudioGuidance(
-                        Navigator.AudioGuidance.VOICE_ALERTS_AND_GUIDANCE,
-                    )
-                    readyNavigator.startGuidance()
+                val route = plan.route
+                if (route != null) {
+                    activeRoute = route
+                    guidanceEngine.startGuidance(route)
+                    drawRoutePolyline(route)
+                    showDestinationMarker(destCoordinate)
                     status.text = plan.summary()?.let {
                         "$it\nThen: ${selected.title}"
                     } ?: "Navigating to ${selected.title}"
                     clearRouteIntelligence()
-                    refreshRouteIntelligence(readyNavigator, force = true)
+                    refreshRouteIntelligence(route, force = true)
                 } else {
+                    routeRequestIssued = false
                     showStatus("Route unavailable: ${plan.status.name.replace('_', ' ').lowercase()}.")
                 }
             }
         }
     }
 
+    private fun drawRoutePolyline(route: Route) {
+        val controller = mapController ?: return
+        routePolyline?.let(controller::removePolyline)
+        routePolyline = controller.addPolyline(route.geometry, ROUTE_LINE_COLOR_HEX, widthDp = 6f)
+    }
+
+    private fun showDestinationMarker(coordinate: RoadCoordinate) {
+        val controller = mapController ?: return
+        destinationMarker?.let(controller::removeMarker)
+        controller.registerIcon(DESTINATION_ICON_ID, destinationPinBitmap())
+        destinationMarker = controller.addMarker(coordinate, DESTINATION_ICON_ID)
+    }
+
+    private fun destinationPinBitmap(): android.graphics.Bitmap {
+        val size = (36 * resources.displayMetrics.density).toInt()
+        val bitmap = androidx.core.graphics.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        val canvas = android.graphics.Canvas(bitmap)
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        paint.style = android.graphics.Paint.Style.FILL
+        paint.color = android.graphics.Color.rgb(30, 136, 229)
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - (3 * resources.displayMetrics.density), paint)
+        paint.style = android.graphics.Paint.Style.STROKE
+        paint.strokeWidth = 3 * resources.displayMetrics.density
+        paint.color = android.graphics.Color.WHITE
+        canvas.drawCircle(size / 2f, size / 2f, size / 2f - (3 * resources.displayMetrics.density), paint)
+        return bitmap
+    }
+
+    private fun stopNavigating() {
+        guidanceEngine.stopGuidance()
+        locationManager?.removeUpdates(locationListener)
+        voiceGuidance.shutdown()
+    }
+
     override fun onDestroy() {
-        routeRoadFeatureMarkers.forEach(Marker::remove)
         routeRoadFeatureMarkers.clear()
         routeRoadFeatureMarkerIds = emptyList()
-        routeCameraMarkers.forEach(Marker::remove)
         routeCameraMarkers.clear()
         routeCameraMarkerIds = emptyList()
-        navigationMap = null
-        navigationFragment?.removePromptVisibilityChangedListener(promptVisibilityListener)
-        navigationFragment = null
-        navigator?.removeArrivalListener(arrivalListener)
-        navigator?.removeRouteChangedListener(routeChangedListener)
-        navigator?.removeRemainingTimeOrDistanceChangedListener(tripProgressListener)
+        locationManager?.removeUpdates(locationListener)
+        guidanceEngine.stopGuidance()
+        voiceGuidance.shutdown()
+        mapView.onDestroy()
+        tileServer?.stop()
+        mapController = null
         super.onDestroy()
     }
 
@@ -500,20 +543,20 @@ class NavigationActivity : FragmentActivity() {
     }
 
     private fun refreshRouteIntelligence(
-        readyNavigator: Navigator,
+        route: Route,
         force: Boolean,
     ) {
         if (displayFilters.isEnabled(DrivingContext.DRIVING, DisplayLayer.TERRAIN)) {
-            TerrainGuidance.refresh(this, readyNavigator, force)
+            TerrainGuidance.refresh(this, route, force)
         }
         if (displayFilters.isEnabled(DrivingContext.DRIVING, DisplayLayer.SPEED_LIMIT_AHEAD)) {
-            SpeedLimitAheadGuidance.refresh(this, readyNavigator, force)
+            SpeedLimitAheadGuidance.refresh(this, route, force)
         }
         if (displayFilters.isEnabled(DrivingContext.DRIVING, DisplayLayer.ROAD_SIGNS)) {
-            RouteRoadFeatureGuidance.refresh(this, readyNavigator, force)
+            RouteRoadFeatureGuidance.refresh(this, route, force)
         }
         if (displayFilters.isEnabled(DrivingContext.DRIVING, DisplayLayer.SPEED_CAMERAS)) {
-            RouteCameraGuidance.refresh(this, readyNavigator, force)
+            RouteCameraGuidance.refresh(this, route, force)
         }
     }
 
@@ -546,113 +589,77 @@ class NavigationActivity : FragmentActivity() {
             }
     }
 
-    private fun updateTripProgress() {
-        val trip = navigator?.currentTimeAndDistance ?: return
-        if (trip.meters <= 0 || trip.seconds <= 0) return
+    private fun updateTripProgress(state: GuidanceState) {
+        if (state.isRerouting) {
+            status.text = "Rerouting…"
+            return
+        }
+        if (state.hasArrived) {
+            status.text = "Arrived at ${destination?.title ?: "destination"}"
+            return
+        }
+        val meters = state.distanceToDestinationMeters ?: return
+        if (meters <= 0) return
         val distance =
-            if (trip.meters >= 10_000) {
-                "${trip.meters / 1_000} km"
-            } else if (trip.meters >= 1_000) {
-                String.format(Locale.GERMANY, "%.1f km", trip.meters / 1_000.0)
+            if (meters >= 10_000) {
+                "${meters / 1_000} km"
+            } else if (meters >= 1_000) {
+                String.format(Locale.GERMANY, "%.1f km", meters / 1_000.0)
             } else {
-                "${trip.meters} m"
+                "$meters m"
             }
-        val hours = trip.seconds / 3_600
-        val minutes = (trip.seconds % 3_600 + 59) / 60
-        val duration = if (hours > 0) "${hours}h ${minutes}m" else "$minutes min"
         val arrival =
-            android.text.format.DateFormat.getTimeFormat(this).format(
-                Date(System.currentTimeMillis() + trip.seconds * 1_000L),
-            )
-        status.text = "$distance · $duration · arrive $arrival"
+            state.etaEpochSeconds?.let {
+                android.text.format.DateFormat
+                    .getTimeFormat(this)
+                    .format(Date(it * 1_000L))
+            } ?: "--"
+        status.text = "$distance · arrive $arrival"
     }
 
     private fun showRouteRoadFeatureMarkers(upcoming: List<UpcomingRouteRoadFeature>) {
-        val map = navigationMap ?: return
-        val visible = routeFeaturesInsideVisibleMap(map, upcoming)
+        val controller = mapController ?: return
+        val visible = routeFeaturesInsideVisibleMap(controller, upcoming)
         val pointIds = visible.map { it.point.id }
         if (pointIds == routeRoadFeatureMarkerIds) return
-        routeRoadFeatureMarkers.forEach(Marker::remove)
+        routeRoadFeatureMarkers.forEach(controller::removeMarker)
         routeRoadFeatureMarkers.clear()
         routeRoadFeatureMarkerIds = pointIds
         visible.forEach { sign ->
             val point = sign.point
-            map
-                .addMarker(
-                    MarkerOptions()
-                        .position(LatLng(point.coordinate.latitude, point.coordinate.longitude))
-                        .title(point.title)
-                        .snippet("On your route · ${sign.compactText()} · ${point.detail}")
-                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.infrastructure(point).second))
-                        .anchor(.5f, .5f)
-                        .zIndex(8f),
-                )?.let(routeRoadFeatureMarkers::add)
+            val (iconId, bitmap) = mapMarkerIcons.infrastructure(point)
+            controller.registerIcon(iconId, bitmap)
+            routeRoadFeatureMarkers += controller.addMarker(point.coordinate, iconId)
         }
     }
 
     private fun routeFeaturesInsideVisibleMap(
-        map: GoogleMap,
+        controller: MapLibreMapController,
         upcoming: List<UpcomingRouteRoadFeature>,
     ): List<UpcomingRouteRoadFeature> {
-        val bounds =
-            runCatching { map.projection.visibleRegion.latLngBounds }.getOrNull()
-                ?: return upcoming
-        return upcoming.filter { sign ->
-            val coordinate = sign.point.coordinate
-            coordinate.latitude in bounds.southwest.latitude..bounds.northeast.latitude &&
-                if (bounds.southwest.longitude <= bounds.northeast.longitude) {
-                    coordinate.longitude in bounds.southwest.longitude..bounds.northeast.longitude
-                } else {
-                    coordinate.longitude >= bounds.southwest.longitude ||
-                        coordinate.longitude <= bounds.northeast.longitude
-                }
-        }
+        val bounds = runCatching { controller.visibleBounds() }.getOrNull() ?: return upcoming
+        return upcoming.filter { sign -> bounds.contains(sign.point.coordinate) }
     }
 
     private fun showRouteCameraMarkers(upcoming: List<UpcomingRouteCamera>) {
-        val map = navigationMap ?: return
+        val controller = mapController ?: return
+        val bounds = runCatching { controller.visibleBounds() }.getOrNull()
         val visible =
             upcoming.filter { camera ->
-                coordinateIsInsideVisibleMap(
-                    map,
-                    camera.camera.poi.latitude,
-                    camera.camera.poi.longitude,
-                )
+                bounds == null ||
+                    bounds.contains(RoadCoordinate(camera.camera.poi.latitude, camera.camera.poi.longitude))
             }
         val ids = visible.map(UpcomingRouteCamera::id)
         if (ids == routeCameraMarkerIds) return
-        routeCameraMarkers.forEach(Marker::remove)
+        routeCameraMarkers.forEach(controller::removeMarker)
         routeCameraMarkers.clear()
         routeCameraMarkerIds = ids
         visible.forEach { upcomingCamera ->
             val camera = upcomingCamera.camera.poi
-            map
-                .addMarker(
-                    MarkerOptions()
-                        .position(LatLng(camera.latitude, camera.longitude))
-                        .title(upcomingCamera.compactText())
-                        .snippet(upcomingCamera.camera.sources.joinToString(" + ") { it.displayName })
-                        .icon(BitmapDescriptorFactory.fromBitmap(mapMarkerIcons.camera(camera.type, camera.speedLimitKph).second))
-                        .anchor(.5f, .5f)
-                        .zIndex(9f),
-                )?.let(routeCameraMarkers::add)
+            val (iconId, bitmap) = mapMarkerIcons.camera(camera.type, camera.speedLimitKph)
+            controller.registerIcon(iconId, bitmap)
+            routeCameraMarkers += controller.addMarker(RoadCoordinate(camera.latitude, camera.longitude), iconId)
         }
-    }
-
-    private fun coordinateIsInsideVisibleMap(
-        map: GoogleMap,
-        latitude: Double,
-        longitude: Double,
-    ): Boolean {
-        val bounds =
-            runCatching { map.projection.visibleRegion.latLngBounds }.getOrNull()
-                ?: return true
-        return latitude in bounds.southwest.latitude..bounds.northeast.latitude &&
-            if (bounds.southwest.longitude <= bounds.northeast.longitude) {
-                longitude in bounds.southwest.longitude..bounds.northeast.longitude
-            } else {
-                longitude >= bounds.southwest.longitude || longitude <= bounds.northeast.longitude
-            }
     }
 
     private fun showStatus(message: String) {
@@ -665,5 +672,11 @@ class NavigationActivity : FragmentActivity() {
         private const val STATE_ROUTE_REQUEST_ISSUED = "route_request_issued"
         private const val MAX_SIGNBOARD_WIDTH_PX = 900
         private const val SIGNBOARD_HEIGHT_PX = 260
+        private const val LOCATION_UPDATE_INTERVAL_MILLIS = 1_000L
+        private const val LOCATION_UPDATE_MIN_METERS = 3f
+        private const val DRIVING_ZOOM = 17.0
+        private const val DESTINATION_ICON_ID = "nav-destination-pin"
+        private const val MY_LOCATION_ICON_ID = "nav-my-location-puck"
+        private const val ROUTE_LINE_COLOR_HEX = "#4F7CFF"
     }
 }

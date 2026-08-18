@@ -3,9 +3,8 @@
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
-    <fragment
-        android:id="@+id/navigation_fragment"
-        android:name="com.google.android.libraries.navigation.SupportNavigationFragment"
+    <org.maplibre.android.maps.MapView
+        android:id="@+id/navigation_map_view"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 

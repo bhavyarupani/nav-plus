@@ -247,8 +247,50 @@ stack - the first of the three Google-based screens to be migrated:
   signals", with camera/traffic-signal/speed-limit icons and coloured speed-section polylines
   actually visible on screen.
 
-**Not started:** wiring the free stack into `NavigationActivity` and `RoadPulseNavigationScreen`
-(the Android Auto screen), which still run entirely on Google Navigation SDK - see "Cross-cutting
-observations" from the pre-migration investigation for why this is the larger, higher-risk
-remaining piece (route-line/puck/turn-arrow rendering has no existing app code to port). The
-working Google implementation on `main` is untouched throughout.
+**Resolved for `NavigationActivity`.** The live turn-by-turn driving screen now runs entirely on
+the free stack - Google Navigation SDK's `Navigator`, `SupportNavigationFragment`, and its
+built-in speedometer/speed-limit-icon/route-line/puck rendering are gone from this file
+completely:
+- `GraphHopperRoutingEngine` + `GraphHopperGuidanceEngine` replace `Navigator` for both route
+  calculation and real-time guidance (map-matching, ETA, off-route detection/rerouting).
+- `VoiceGuidance` replaces `Navigator.setAudioGuidance` for spoken turn-by-turn prompts.
+- A raw MapLibre `MapView` + `LocalMbtilesServer` + `MapLibreMapController` replace
+  `SupportNavigationFragment`/`GoogleMap` - route-line and location-puck rendering had no
+  existing app code to port (Google's fragment drew both internally), so this is genuinely new
+  code, not a port. Turn-arrow rendering on the map itself is out of scope for this pass
+  (documented gap, not a silent omission) - the route line, voice prompts, and the road-ahead/
+  signboard panels carry maneuver information instead.
+- GPS updates are now owned directly by this activity via `android.location.LocationManager`
+  (`Navigator` previously did this internally), feeding every fix to the guidance engine, the
+  map's location puck, and the camera.
+- `RouteStopOptimizer` gained a `RoutingEngine`-based `setRoute` overload (see below) for the
+  supermarket/fuel smart-stop feature, with no usage quota (GraphHopper is on-device and
+  unmetered, unlike the Google path it replaces).
+- The Autobahn exit-signboard/lane-panel system (`SignboardGuidanceEngine`) gained a second
+  `GuidanceState`-based `build` overload specifically because GraphHopper's instruction data
+  has no off-ramp/exit/fork concept at all (confirmed via `javap` against the real jar) - unlike
+  the original Google `NavInfo`-based overload, exit/junction detection is now driven primarily
+  by the already-OSM-based `RouteRoadFeatureGuidance` motorway-junction matching, which was
+  already independent of the routing engine to begin with. No per-lane Google data exists to
+  fall back to, so the lane panel simply hides when there's nothing reliable to show.
+- The four route-intelligence singletons (`TerrainGuidance`, `SpeedLimitAheadGuidance`,
+  `RouteRoadFeatureGuidance`, `RouteCameraGuidance`) each gained a `Route`-based `refresh`
+  overload alongside their original `Navigator`-based one - each only ever consumed
+  `navigator.currentRouteSegment`'s geometry, one field.
+
+Verified end to end on the physical Pixel 6 Pro via the real app flow (search → select → Start
+navigation), not a standalone POC: a real GraphHopper route was calculated and guidance started
+(status text "206 m · arrive 9:13 pm", live ETA from `GuidanceState`), `SpeedLimitAheadGuidance`
+correctly reported a real "50" km/h limit ahead using its new `Route`-based overload, and - since
+the physical test device is not actually in Bremen, the only region the bundled routing graph
+covers - once real (non-Bremen) GPS fixes arrived after the initial test fix, the guidance engine
+correctly detected the device was off-route and surfaced "Rerouting…" without crashing, confirming
+off-route detection and its failure-handling path both work correctly on real hardware. No
+Google Maps/Navigation SDK code remains reachable from this file.
+
+**`RoadPulseNavigationScreen`** (the Android Auto screen) is the one remaining screen still on
+Google Navigation SDK - see "Cross-cutting observations" from the pre-migration investigation for
+why it's expected to follow the same pattern as `NavigationActivity` (it shares the same
+`SignboardGuidanceEngine`/`MapMarkerIconFactory`/guidance-singleton overloads already built,
+requiring an Android-Auto-specific map/surface integration on top). The working Google
+implementation on `main` is untouched throughout.
