@@ -19,6 +19,7 @@ import com.roadpulse.auto.alerts.OpenGatsoPoiType
 import com.roadpulse.auto.alerts.OpenGatsoRepository
 import com.roadpulse.auto.alerts.OpenStreetMapCameraRepository
 import com.roadpulse.auto.alerts.mergeCameraSources
+import com.roadpulse.auto.engine.Route
 import com.roadpulse.auto.traffic.RoadCoordinate
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -249,12 +250,29 @@ object RouteCameraGuidance {
         navigator: Navigator,
         force: Boolean = false,
     ) {
-        val route =
+        val geometry =
             runCatching {
                 navigator.currentRouteSegment?.latLngs.orEmpty().map {
                     RoadCoordinate(it.latitude, it.longitude)
                 }
             }.getOrDefault(emptyList())
+        refresh(context, geometry, force)
+    }
+
+    /** Free-stack equivalent of the `Navigator`-based [refresh] above, for `GraphHopperRoutingEngine`-
+     * produced routes. */
+    fun refresh(
+        context: Context,
+        route: Route,
+        force: Boolean = false,
+    ) = refresh(context, route.geometry, force)
+
+    private fun refresh(
+        context: Context,
+        geometry: List<RoadCoordinate>,
+        force: Boolean,
+    ) {
+        val route = geometry
         if (route.size < 2) return
         val location = lastKnownLocation(context)
         val immediateCountry =

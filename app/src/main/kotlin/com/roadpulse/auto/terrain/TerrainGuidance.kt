@@ -9,6 +9,7 @@ import android.location.LocationManager
 import android.os.Handler
 import android.os.Looper
 import com.google.android.libraries.navigation.Navigator
+import com.roadpulse.auto.engine.Route
 import com.roadpulse.auto.traffic.RoadCoordinate
 import java.util.concurrent.CopyOnWriteArraySet
 import java.util.concurrent.atomic.AtomicBoolean
@@ -46,18 +47,34 @@ object TerrainGuidance {
         navigator: Navigator,
         force: Boolean = false,
     ) {
-        val now = System.currentTimeMillis()
-        if (!force && now - lastAttemptMillis < REFRESH_INTERVAL_MILLIS) return
-        if (!refreshInProgress.compareAndSet(false, true)) return
-        lastAttemptMillis = now
-
-        val route =
+        val geometry =
             runCatching {
                 navigator.currentRouteSegment?.latLngs.orEmpty().map { coordinate ->
                     RoadCoordinate(coordinate.latitude, coordinate.longitude)
                 }
             }.getOrDefault(emptyList())
-        if (route.size < 2) {
+        refresh(context, geometry, force)
+    }
+
+    /** Free-stack equivalent of the `Navigator`-based [refresh] above, for `GraphHopperRoutingEngine`-
+     * produced routes. */
+    fun refresh(
+        context: Context,
+        route: Route,
+        force: Boolean = false,
+    ) = refresh(context, route.geometry, force)
+
+    private fun refresh(
+        context: Context,
+        geometry: List<RoadCoordinate>,
+        force: Boolean,
+    ) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastAttemptMillis < REFRESH_INTERVAL_MILLIS) return
+        if (!refreshInProgress.compareAndSet(false, true)) return
+        lastAttemptMillis = now
+
+        if (geometry.size < 2) {
             refreshInProgress.set(false)
             return
         }
@@ -73,7 +90,7 @@ object TerrainGuidance {
                         repository ?: OpenMeteoElevationRepository(appContext).also {
                             repository = it
                         }
-                    readyRepository.profileForRoute(route, current)
+                    readyRepository.profileForRoute(geometry, current)
                 }
             mainHandler.post {
                 refreshInProgress.set(false)
