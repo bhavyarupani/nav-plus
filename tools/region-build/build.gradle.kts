@@ -26,6 +26,12 @@ tasks.register<JavaExec>("importGraphHopper") {
     mainClass.set("com.roadpulse.regionbuild.GraphHopperImporter")
     classpath = sourceSets["main"].runtimeClasspath
     args = (project.findProperty("args") as String? ?: "").split(" ").filter { it.isNotBlank() }
+    // No heap was set at all before this - JavaExec fell back to the JVM's default (roughly a
+    // quarter of physical RAM), which OOM'd importing Italy's ~2.1GB extract on this 8GB dev
+    // machine. GraphHopper's OSM import holds node-location and way-processing buffers in heap
+    // regardless of the target graph's own on-disk storage type, so this scales with input size,
+    // not output size.
+    maxHeapSize = "6g"
 }
 
 tasks.register<JavaExec>("buildSearchIndex") {
@@ -35,6 +41,7 @@ tasks.register<JavaExec>("buildSearchIndex") {
     mainClass.set("com.roadpulse.regionbuild.BuildSearchIndex")
     classpath = sourceSets["main"].runtimeClasspath
     args = (project.findProperty("args") as String? ?: "").split(" ").filter { it.isNotBlank() }
+    maxHeapSize = "6g"
 }
 
 application {
