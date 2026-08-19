@@ -1,0 +1,26 @@
+package com.navplus.core.common.model
+
+enum class Maneuver {
+    DEPART,
+    ARRIVE,
+    STRAIGHT,
+    TURN_LEFT,
+    TURN_RIGHT,
+    TURN_SLIGHT_LEFT,
+    TURN_SLIGHT_RIGHT,
+    TURN_SHARP_LEFT,
+    TURN_SHARP_RIGHT,
+    U_TURN,
+    ROUNDABOUT_ENTER,
+    ROUNDABOUT_EXIT,
+    FORK_LEFT,
+    FORK_RIGHT,
+    MERGE_LEFT,
+    MERGE_RIGHT,
+    ON_RAMP,
+    OFF_RAMP,
+    FERRY,
+    TUNNEL,
+    KEEP_LEFT,
+    KEEP_RIGHT,
+}

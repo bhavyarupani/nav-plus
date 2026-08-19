@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Production releases must explicitly list the signatures of trusted hosts. -->
-    <string-array name="hosts_allowlist" />
-</resources>
-
