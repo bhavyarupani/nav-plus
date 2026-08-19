@@ -1,0 +1,17 @@
+id,displayName,geofabrikSlug,boundsSouth,boundsWest,boundsNorth,boundsEast,geofabrikExtractMB
+de-hb,Bremen,bremen,53.0103,8.4810,53.6106,8.9913,20.2
+de-bw,Baden-Württemberg,baden-wuerttemberg,47.5308,7.5065,49.7946,10.5150,615
+de-by,Bayern,bayern,47.2654,8.9752,50.5662,13.8495,809
+de-be,Berlin,berlin,52.3345,13.0828,52.6783,13.7622,94
+de-bb,Brandenburg,brandenburg,51.3525,11.2240,53.5784,14.7748,284
+de-hh,Hamburg,hamburg,53.3918,7.9678,54.0626,10.3320,51
+de-he,Hessen,hessen,49.3932,7.7680,51.6592,10.2460,327
+de-mv,Mecklenburg-Vorpommern,mecklenburg-vorpommern,53.1062,10.5881,54.9837,14.4229,121
+de-ni,Niedersachsen,niedersachsen,51.2935,6.2953,54.2396,11.6073,479
+de-nw,Nordrhein-Westfalen,nordrhein-westfalen,50.3209,5.8644,52.5335,9.4683,867
+de-rp,Rheinland-Pfalz,rheinland-pfalz,48.9638,6.1091,50.9440,8.5112,254
+de-sl,Saarland,saarland,49.1081,6.3545,49.6415,7.4063,52
+de-sn,Sachsen,sachsen,50.1666,11.8668,51.6874,15.0508,254
+de-st,Sachsen-Anhalt,sachsen-anhalt,50.9289,10.5473,53.0566,13.2127,165
+de-sh,Schleswig-Holstein,schleswig-holstein,53.3569,7.4646,55.1463,11.7993,150
+de-th,Thüringen,thueringen,50.1997,9.8632,51.6524,12.6611,151
