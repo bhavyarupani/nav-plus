@@ -72,9 +72,11 @@ dependencies {
     implementation(project(":core:safety"))
     implementation(project(":core:search"))
     implementation(project(":core:regions"))
+    implementation(project(":core:group"))
     implementation(project(":feature:home"))
     implementation(project(":feature:navigation"))
     implementation(project(":feature:search"))
+    implementation(project(":feature:group"))
 
     debugImplementation(libs.compose.ui.tooling)
 }

@@ -1,6 +1,7 @@
 package com.navplus.feature.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,6 +41,7 @@ import com.navplus.core.common.model.LatLng
 @Composable
 fun HomeScreen(
     onSearchTap: () -> Unit,
+    onGroupTap: () -> Unit = {},
     vm: HomeViewModel = hiltViewModel(),
 ) {
     val connectivity by vm.connectivityState.collectAsStateWithLifecycle()
@@ -69,6 +71,7 @@ fun HomeScreen(
         }
 
         QuickActions(
+            onGroupTap = onGroupTap,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 32.dp, start = 16.dp, end = 16.dp)
@@ -120,7 +123,7 @@ private fun ConnectivityBanner(state: ConnectivityState) {
 }
 
 @Composable
-private fun QuickActions(modifier: Modifier = Modifier) {
+private fun QuickActions(onGroupTap: () -> Unit, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -138,14 +141,17 @@ private fun QuickActions(modifier: Modifier = Modifier) {
             QuickActionButton(emoji = "🚻", label = "Toilet")
             QuickActionButton(emoji = "☕", label = "Break")
             QuickActionButton(emoji = "⚡", label = "Charge")
-            QuickActionButton(emoji = "👥", label = "Group")
+            QuickActionButton(emoji = "👥", label = "Group", onClick = onGroupTap)
         }
     }
 }
 
 @Composable
-private fun QuickActionButton(emoji: String, label: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun QuickActionButton(emoji: String, label: String, onClick: () -> Unit = {}) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.clickable(onClick = onClick),
+    ) {
         Box(
             modifier = Modifier
                 .size(48.dp)

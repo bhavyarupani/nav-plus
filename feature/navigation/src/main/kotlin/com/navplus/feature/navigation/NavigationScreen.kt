@@ -37,11 +37,17 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.navplus.core.common.model.Maneuver
 import com.navplus.core.map.MapStyleProvider
 import com.navplus.core.map.NavMapView
+import com.navplus.core.navigation.LookaheadEvent
 import com.navplus.core.navigation.NavigationState
+import com.navplus.core.navigation.RoadCharacter
 import com.navplus.core.navigation.RouteProgress
+import com.navplus.core.regions.BorderCrossing
 import com.navplus.core.safety.model.SafetyAlert
 import com.navplus.core.common.model.LatLng
 import com.navplus.core.connectivity.ConnectivityState
+import com.navplus.core.group.model.GroupSession
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.wrapContentHeight
 
 @Composable
 fun NavigationScreen(
@@ -51,6 +57,10 @@ fun NavigationScreen(
     val navState by vm.navState.collectAsStateWithLifecycle()
     val location by vm.currentLocation.collectAsStateWithLifecycle()
     val alerts by vm.safetyAlerts.collectAsStateWithLifecycle()
+    val lookaheadEvents by vm.lookaheadEvents.collectAsStateWithLifecycle()
+    val roadCharacters by vm.roadCharacters.collectAsStateWithLifecycle()
+    val borderCrossings by vm.borderCrossings.collectAsStateWithLifecycle()
+    val groupSession by vm.groupSession.collectAsStateWithLifecycle()
 
     val mapCenter = location?.latLng ?: LatLng(48.1351, 11.5820)
     val bearing = location?.bearingDeg ?: 0f
@@ -70,6 +80,10 @@ fun NavigationScreen(
                 NavigationHud(
                     progress = state.progress,
                     alerts = alerts,
+                    lookaheadEvents = lookaheadEvents,
+                    roadCharacters = roadCharacters,
+                    borderCrossings = borderCrossings,
+                    groupSession = groupSession,
                     currentSpeedKph = location?.speedKph ?: 0f,
                     onExit = {
                         vm.stopNavigation()
@@ -92,13 +106,24 @@ fun NavigationScreen(
 private fun NavigationHud(
     progress: RouteProgress,
     alerts: List<SafetyAlert>,
+    lookaheadEvents: List<LookaheadEvent>,
+    roadCharacters: List<RoadCharacter>,
+    borderCrossings: List<BorderCrossing>,
+    groupSession: GroupSession?,
     currentSpeedKph: Float,
     onExit: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         ManeuverCard(progress, onExit)
+        LookaheadTimeline(
+            events = lookaheadEvents,
+            roadCharacters = roadCharacters,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Spacer(Modifier.weight(1f))
+        borderCrossings.firstOrNull()?.let { BorderPrepBanner(it) }
         alerts.firstOrNull()?.let { SafetyAlertBanner(it) }
+        groupSession?.let { GroupEtaBar(it) }
         BottomInfoBar(progress, currentSpeedKph)
     }
 }
@@ -320,6 +345,93 @@ private fun NoRouteOverlay(onExit: () -> Unit) {
 private fun formatDistance(meters: Double): String = when {
     meters >= 1_000 -> "${"%.1f".format(meters / 1_000)} km"
     else            -> "${meters.toInt()} m"
+}
+
+@Composable
+private fun BorderPrepBanner(crossing: BorderCrossing) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFF1C1C2E).copy(alpha = 0.95f),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(crossing.toCountry.flag, fontSize = 22.sp)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "${crossing.toCountry.name} in ${formatDistance(crossing.distanceMeters)}",
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "Max ${crossing.toCountry.maxSpeedKph} km/h · Motorway ${crossing.toCountry.motorwaySpeedKph} km/h",
+                        color = Color(0xFF94A3B8),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
+            }
+            if (crossing.toCountry.requiresVignette) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "⚠ ${crossing.toCountry.vignetteNote}",
+                    color = Color(0xFFF59E0B),
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            }
+            crossing.toCountry.fuelNote?.let { note ->
+                Text("⛽ $note", color = Color(0xFF94A3B8), style = MaterialTheme.typography.labelSmall)
+            }
+        }
+    }
+}
+
+@Composable
+private fun GroupEtaBar(session: GroupSession) {
+    if (session.members.size < 2) return
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = Color(0xFF1C1C2E).copy(alpha = 0.92f),
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            session.sortedMembers.take(4).forEach { member ->
+                val isSelf = member.id == session.selfId
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        member.name.take(6),
+                        color = if (isSelf) Color.White else Color(0xFF94A3B8),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = if (isSelf) FontWeight.SemiBold else FontWeight.Normal,
+                    )
+                    Text(
+                        member.etaSec?.let { formatEta(it) } ?: "–",
+                        color = if (isSelf) Color(0xFF3B82F6) else Color(0xFFB0B8CC),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+            }
+            Spacer(Modifier.weight(1f))
+            session.groupEtaSec?.let { eta ->
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Group", color = Color(0xFF6B7A99), style = MaterialTheme.typography.labelSmall)
+                    Text(formatEta(eta), color = Color(0xFFF59E0B), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
 }
 
 private fun formatEta(seconds: Long): String {
