@@ -51,7 +51,7 @@ class GroupSyncService @Inject constructor(
     private val envelopeAdapter = moshi.adapter(WsEnvelope::class.java)
 
     companion object {
-        private const val RELAY_BASE = "wss://convoy.navplus.app/rooms"
+        private const val RELAY_BASE = "wss://97ef9e515cb340.lhr.life/rooms"
         private const val LOCATION_INTERVAL_MS = 4_000L
     }
 

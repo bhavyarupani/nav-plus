@@ -77,6 +77,11 @@ class NavigationViewModel @Inject constructor(
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     init {
+        // Prevent NavigationScreen from immediately exiting while waiting for first location fix
+        if (tripRepository.pending.value != null) {
+            _routingUiState.value = RoutingUiState.Calculating
+        }
+
         viewModelScope.launch {
             locationTracker.locationUpdates().collect { location ->
                 _currentLocation.value = location

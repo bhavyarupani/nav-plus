@@ -87,21 +87,28 @@ class TomTomRoutingEngine @Inject constructor(
                 val instructions = r.optJSONObject("guidance")?.optJSONArray("instructions")
                 if (instructions != null) {
                     val totalLen = summary.getDouble("lengthInMeters").coerceAtLeast(1.0)
+                    val offsets = (0 until instructions.length()).map { s ->
+                        instructions.getJSONObject(s).optDouble("routeOffsetInMeters", 0.0)
+                    }
                     for (s in 0 until instructions.length()) {
                         val instr = instructions.getJSONObject(s)
-                        val offsetMeters = instr.optDouble("routeOffsetInMeters", 0.0)
-                        val idx = (offsetMeters / (totalLen / geometry.size.coerceAtLeast(1))).toInt()
-                        val point = if (idx < geometry.size) geometry[idx] else geometry.lastOrNull() ?: continue
-                        steps.add(RouteStep(
-                            instruction = instr.optString("message", ""),
-                            maneuver = instr.optString("maneuver", "").toManeuver(),
-                            distanceMeters = offsetMeters,
-                            durationSeconds = instr.optLong("travelTimeInSeconds", 0L),
-                            startLocation = point,
-                            endLocation = point,
-                            geometry = listOf(point),
-                            streetName = instr.optString("street").takeIf { it.isNotBlank() },
-                        ))
+                        val offset = offsets[s]
+                        val nextOffset = if (s + 1 < offsets.size) offsets[s + 1] else totalLen
+                        val stepLen = (nextOffset - offset).coerceAtLeast(0.0)
+                        val idx = (offset / (totalLen / geometry.size.coerceAtLeast(1))).toInt()
+                        val point = if (idx < geometry.size) geometry[idx] else geometry.lastOrNull()
+                        if (point != null) {
+                            steps.add(RouteStep(
+                                instruction = instr.optString("message", ""),
+                                maneuver = instr.optString("maneuver", "").toManeuver(),
+                                distanceMeters = stepLen,
+                                durationSeconds = instr.optLong("travelTimeInSeconds", 0L),
+                                startLocation = point,
+                                endLocation = point,
+                                geometry = listOf(point),
+                                streetName = instr.optString("street").takeIf { it.isNotBlank() },
+                            ))
+                        }
                     }
                 }
 

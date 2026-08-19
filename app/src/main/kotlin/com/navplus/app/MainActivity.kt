@@ -1,6 +1,7 @@
 package com.navplus.app
 
 import android.Manifest
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -50,13 +51,15 @@ class MainActivity : ComponentActivity() {
         locationGranted = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
                 android.content.pm.PackageManager.PERMISSION_GRANTED
 
+        val permsToRequest = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permsToRequest.add(Manifest.permission.POST_NOTIFICATIONS)
+        }
         if (!locationGranted) {
-            locationPermissionLauncher.launch(
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION,
-                )
-            )
+            locationPermissionLauncher.launch(permsToRequest.toTypedArray())
         }
 
         setContent {
