@@ -81,6 +81,7 @@ class NavigationActivity : FragmentActivity() {
     private var activeRoute: Route? = null
     private var activeRegionId: String? = null
     private var lastKnownCoordinate: RoadCoordinate? = null
+    private var lastKnownBearing: Double? = null
 
     private lateinit var status: TextView
     private lateinit var lanePanel: View
@@ -334,7 +335,7 @@ class NavigationActivity : FragmentActivity() {
                 // onLocationUpdate silently no-ops on a null controller. Without this, a
                 // stationary device (no further fix until a 3m move) is stuck at MapLibre's
                 // default near-zero zoom for the rest of the navigation session.
-                lastKnownCoordinate?.let { controller.animateCameraTo(it, DRIVING_ZOOM) }
+                lastKnownCoordinate?.let { controller.animateCameraTo(it, DRIVING_ZOOM, lastKnownBearing) }
                 activeRoute?.let(::drawRoutePolyline)
                 showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
                 showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
@@ -473,6 +474,8 @@ class NavigationActivity : FragmentActivity() {
     private fun onLocationUpdate(location: Location) {
         val coordinate = RoadCoordinate(location.latitude, location.longitude)
         lastKnownCoordinate = coordinate
+        val bearingDegrees = if (location.hasBearing()) location.bearing.toDouble() else null
+        bearingDegrees?.let { lastKnownBearing = it }
         guidanceEngine.onLocationUpdate(
             coordinate,
             speedKph = if (location.hasSpeed()) location.speed * 3.6f else null,
@@ -481,8 +484,11 @@ class NavigationActivity : FragmentActivity() {
         val controller = mapController
         if (controller != null) {
             controller.registerIcon(MY_LOCATION_ICON_ID, myLocationPuckBitmap())
-            controller.setMyLocationPuck(coordinate, location.bearing, MY_LOCATION_ICON_ID)
-            controller.animateCameraTo(coordinate, DRIVING_ZOOM)
+            // The camera itself rotates to heading-up below, so the puck icon (rotated relative
+            // to the screen, not the map, by MapLibre's default icon-rotation-alignment) just
+            // points straight up rather than duplicating the same rotation a second time.
+            controller.setMyLocationPuck(coordinate, 0f, MY_LOCATION_ICON_ID)
+            controller.animateCameraTo(coordinate, DRIVING_ZOOM, bearingDegrees ?: lastKnownBearing)
         }
         if (!routeRequestIssued) calculateRoute(coordinate)
     }

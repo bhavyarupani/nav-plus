@@ -3,6 +3,7 @@ package com.roadpulse.auto.map
 import android.graphics.Bitmap
 import android.graphics.PointF
 import com.roadpulse.auto.traffic.RoadCoordinate
+import org.maplibre.android.camera.CameraPosition
 import org.maplibre.android.camera.CameraUpdateFactory
 import org.maplibre.android.geometry.LatLng
 import org.maplibre.android.geometry.LatLngBounds
@@ -122,11 +123,28 @@ class MapLibreMapController(
         myLocationSymbol = null
     }
 
+    /** [bearingDegrees] rotates the whole map to a "heading-up" orientation (0 = true north, as
+     * reported by `Location.getBearing()`) - pass null to leave the camera's current bearing
+     * untouched (e.g. `MainActivity`'s browse-mode camera moves, which should stay north-up). */
     fun animateCameraTo(
         coordinate: RoadCoordinate,
         zoom: Double,
+        bearingDegrees: Double? = null,
     ) {
-        map.animateCamera(CameraUpdateFactory.newLatLngZoom(coordinate.toLatLng(), zoom))
+        val update =
+            if (bearingDegrees != null) {
+                CameraUpdateFactory.newCameraPosition(
+                    CameraPosition
+                        .Builder()
+                        .target(coordinate.toLatLng())
+                        .zoom(zoom)
+                        .bearing(bearingDegrees)
+                        .build(),
+                )
+            } else {
+                CameraUpdateFactory.newLatLngZoom(coordinate.toLatLng(), zoom)
+            }
+        map.animateCamera(update)
     }
 
     fun currentZoom(): Double = map.cameraPosition.zoom
