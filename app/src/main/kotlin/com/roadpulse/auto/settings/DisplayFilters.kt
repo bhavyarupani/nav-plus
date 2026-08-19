@@ -16,8 +16,8 @@ enum class DisplayLayer(
         "Traffic signals, priority/give-way/stop signs, speed-limit signs, school zones, tunnels, bridges, tolls.",
     ),
     AUTOBAHN_TRAFFIC(
-        "Autobahn traffic",
-        "Live congestion, closures, and roadworks from Autobahn GmbH.",
+        "Live traffic",
+        "Live congestion, closures, and roadworks - Autobahn GmbH in Germany, TomTom elsewhere.",
     ),
     AUTOBAHN_FACILITIES(
         "Charging, parking & facilities",

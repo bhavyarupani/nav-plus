@@ -82,6 +82,7 @@ import com.roadpulse.auto.traffic.RoadInfrastructurePoint
 import com.roadpulse.auto.traffic.RoadInfrastructureResult
 import com.roadpulse.auto.traffic.RoadInfrastructureType
 import com.roadpulse.auto.traffic.RoadWeatherResult
+import com.roadpulse.auto.traffic.TomTomTrafficRepository
 import com.roadpulse.auto.traffic.TrafficEvent
 import com.roadpulse.auto.traffic.TrafficEventResult
 import com.roadpulse.auto.traffic.TrafficEventType
@@ -126,6 +127,7 @@ class MainActivity : FragmentActivity() {
     private lateinit var destinationStore: SelectedDestinationStore
     private lateinit var roadInfrastructureRepository: OpenStreetMapRoadInfrastructureRepository
     private lateinit var autobahnTrafficRepository: AutobahnTrafficRepository
+    private lateinit var tomTomTrafficRepository: TomTomTrafficRepository
     private lateinit var autobahnFacilityRepository: AutobahnFacilityRepository
     private lateinit var openChargeMapRepository: OpenChargeMapRepository
     private lateinit var dwdRoadWeatherRepository: DwdRoadWeatherRepository
@@ -168,6 +170,7 @@ class MainActivity : FragmentActivity() {
         cameraDataRefreshCoordinator = CameraDataRefreshCoordinator(this)
         roadInfrastructureRepository = OpenStreetMapRoadInfrastructureRepository(this)
         autobahnTrafficRepository = AutobahnTrafficRepository(this)
+        tomTomTrafficRepository = TomTomTrafficRepository(this)
         autobahnFacilityRepository = AutobahnFacilityRepository(this)
         openChargeMapRepository = OpenChargeMapRepository(this)
         dwdRoadWeatherRepository = DwdRoadWeatherRepository(this)
@@ -1292,6 +1295,21 @@ class MainActivity : FragmentActivity() {
                             if (!showAutobahnTraffic) return@supplyAsync Result.success(TrafficEventResult(emptyList(), 0L, false, 0))
                             runCatching { autobahnTrafficRepository.eventsForRoads(infrastructure.autobahnRefs) }
                         }
+                    // Bbox-based, unlike autobahnTrafficRepository's named-road-ref lookup, so it
+                    // doesn't need to wait on infrastructure - covers everywhere Autobahn GmbH
+                    // doesn't (every country but Germany).
+                    val tomTomTrafficFuture =
+                        CompletableFuture.supplyAsync {
+                            if (!showAutobahnTraffic) return@supplyAsync TrafficEventResult(emptyList(), 0L, false, 0)
+                            runCatching {
+                                tomTomTrafficRepository.eventsInBounds(
+                                    southLatitude = bounds.southWest.latitude,
+                                    westLongitude = bounds.southWest.longitude,
+                                    northLatitude = bounds.northEast.latitude,
+                                    eastLongitude = bounds.northEast.longitude,
+                                )
+                            }.getOrDefault(TrafficEventResult(emptyList(), 0L, true, 0))
+                        }
                     val facilitiesFuture =
                         CompletableFuture.supplyAsync {
                             if (!showAutobahnFacilities) return@supplyAsync RoadFacilityResult(emptyList(), 0L, false)
@@ -1301,10 +1319,17 @@ class MainActivity : FragmentActivity() {
                         }
 
                     val trafficAttempt = trafficFuture.get()
-                    val traffic =
+                    val autobahnTraffic =
                         trafficAttempt.getOrElse {
                             TrafficEventResult(emptyList(), 0L, true, infrastructure.autobahnRefs.size)
                         }
+                    val tomTomTraffic = tomTomTrafficFuture.get()
+                    val traffic =
+                        autobahnTraffic.copy(
+                            events = (autobahnTraffic.events + tomTomTraffic.events).distinctBy(TrafficEvent::id),
+                            timestampMillis = maxOf(autobahnTraffic.timestampMillis, tomTomTraffic.timestampMillis),
+                            usedSavedData = autobahnTraffic.usedSavedData || tomTomTraffic.usedSavedData,
+                        )
                     val autobahnFacilities = facilitiesFuture.get()
                     val openChargeMapFacilities = openChargeMapFuture.get()
                     val facilities =

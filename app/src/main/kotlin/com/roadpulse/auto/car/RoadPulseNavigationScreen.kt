@@ -71,6 +71,8 @@ import com.roadpulse.auto.traffic.RoadFacilityType
 import com.roadpulse.auto.traffic.RoadInfrastructurePoint
 import com.roadpulse.auto.traffic.RoadInfrastructureType
 import com.roadpulse.auto.traffic.RoadWeatherResult
+import com.roadpulse.auto.traffic.TomTomTrafficRepository
+import com.roadpulse.auto.traffic.TrafficEvent
 import com.roadpulse.auto.traffic.TrafficEventResult
 import com.roadpulse.auto.traffic.TrafficEventType
 import com.roadpulse.auto.traffic.TrafficSnapshotStore
@@ -132,6 +134,7 @@ class RoadPulseNavigationScreen(
     private val roadInfrastructureRepository =
         OpenStreetMapRoadInfrastructureRepository(carContext)
     private val autobahnTrafficRepository = AutobahnTrafficRepository(carContext)
+    private val tomTomTrafficRepository = TomTomTrafficRepository(carContext)
     private val autobahnFacilityRepository = AutobahnFacilityRepository(carContext)
     private val openChargeMapRepository = OpenChargeMapRepository(carContext)
     private val dwdRoadWeatherRepository = DwdRoadWeatherRepository(carContext)
@@ -779,6 +782,21 @@ class RoadPulseNavigationScreen(
                                 )
                             }
                         }
+                    // Bbox-based, unlike autobahnTrafficRepository's named-road-ref lookup, so it
+                    // doesn't need to wait on infrastructure - covers everywhere Autobahn GmbH
+                    // doesn't (every country but Germany).
+                    val tomTomTrafficFuture =
+                        CompletableFuture.supplyAsync {
+                            if (!showAutobahnTraffic) return@supplyAsync TrafficEventResult(emptyList(), 0L, false, 0)
+                            runCatching {
+                                tomTomTrafficRepository.eventsInBounds(
+                                    southLatitude = bounds.southWest.latitude,
+                                    westLongitude = bounds.southWest.longitude,
+                                    northLatitude = bounds.northEast.latitude,
+                                    eastLongitude = bounds.northEast.longitude,
+                                )
+                            }.getOrDefault(TrafficEventResult(emptyList(), 0L, true, 0))
+                        }
                     val facilitiesFuture =
                         CompletableFuture.supplyAsync {
                             if (!showAutobahnFacilities) {
@@ -805,7 +823,14 @@ class RoadPulseNavigationScreen(
                             }.getOrDefault(emptyList())
                         }
 
-                    val traffic = trafficFuture.get()
+                    val autobahnTraffic = trafficFuture.get()
+                    val tomTomTraffic = tomTomTrafficFuture.get()
+                    val traffic =
+                        autobahnTraffic.copy(
+                            events = (autobahnTraffic.events + tomTomTraffic.events).distinctBy(TrafficEvent::id),
+                            timestampMillis = maxOf(autobahnTraffic.timestampMillis, tomTomTraffic.timestampMillis),
+                            usedSavedData = autobahnTraffic.usedSavedData || tomTomTraffic.usedSavedData,
+                        )
                     val autobahnFacilities = facilitiesFuture.get()
                     val openChargeMapFacilities = openChargeMapFuture.get()
                     val facilities =

@@ -42,6 +42,7 @@ import com.roadpulse.auto.terrain.OpenMeteoElevationRepository
 import com.roadpulse.auto.traffic.AutobahnTrafficRepository
 import com.roadpulse.auto.traffic.DwdRoadWeatherRepository
 import com.roadpulse.auto.traffic.RoadInfrastructureType
+import com.roadpulse.auto.traffic.TomTomTrafficRepository
 import java.io.File
 import java.util.Locale
 
@@ -616,6 +617,7 @@ class SettingsActivity : Activity() {
                     OpenGatsoDataUpdater.ATTRIBUTION +
                         "\n" + OfficialCameraDataUpdater.ATTRIBUTION +
                         "\n" + AutobahnTrafficRepository.ATTRIBUTION +
+                        "\n" + TomTomTrafficRepository.ATTRIBUTION +
                         "\n" + DwdRoadWeatherRepository.ATTRIBUTION +
                         "\n" + OpenMeteoElevationRepository.ATTRIBUTION +
                         "\nRoad signs, signals, additional camera data, and the supermarket/fuel " +
