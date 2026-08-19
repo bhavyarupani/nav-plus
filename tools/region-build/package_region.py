@@ -93,11 +93,12 @@ def main():
         print(f"  downloadSizeBytes:  {archive_size}")
         print(f"  sha256:             {archive_sha256}")
         print()
-        print("regions.json entry:")
+        print("regions.json entry (preview - the real write happens in update_catalog_json.py):")
         print(json.dumps({
             "id": region["id"],
             "displayName": region["displayName"],
-            "countryCode": "DE",
+            "continent": region["continent"],
+            "country": region["country"],
             "bboxSouth": float(region["boundsSouth"]),
             "bboxWest": float(region["boundsWest"]),
             "bboxNorth": float(region["boundsNorth"]),
