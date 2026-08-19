@@ -37,6 +37,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.navplus.core.common.model.Maneuver
 import com.navplus.core.map.MapStyleProvider
 import com.navplus.core.map.NavMapView
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextButton
 import com.navplus.core.navigation.LookaheadEvent
 import com.navplus.core.navigation.NavigationState
 import com.navplus.core.navigation.RoadCharacter
@@ -55,6 +57,7 @@ fun NavigationScreen(
     vm: NavigationViewModel = hiltViewModel(),
 ) {
     val navState by vm.navState.collectAsStateWithLifecycle()
+    val routingUiState by vm.routingUiState.collectAsStateWithLifecycle()
     val location by vm.currentLocation.collectAsStateWithLifecycle()
     val alerts by vm.safetyAlerts.collectAsStateWithLifecycle()
     val lookaheadEvents by vm.lookaheadEvents.collectAsStateWithLifecycle()
@@ -74,6 +77,13 @@ fun NavigationScreen(
             bearing = bearing,
             tilt = 45.0,
         )
+
+        when (routingUiState) {
+            is RoutingUiState.Calculating -> RoutingSpinner()
+            is RoutingUiState.NoOfflineCoverage -> NoOfflineOverlay(onExit = onExit)
+            is RoutingUiState.Error -> RouteErrorOverlay((routingUiState as RoutingUiState.Error).message, onExit)
+            else -> Unit
+        }
 
         when (val state = navState) {
             is NavigationState.Navigating -> {
@@ -97,7 +107,10 @@ fun NavigationScreen(
             NavigationState.RouteUnavailable -> {
                 NoRouteOverlay(onExit = onExit)
             }
-            NavigationState.Idle -> { onExit() }
+            NavigationState.Idle -> {
+                // Don't exit while we're still calculating a route
+                if (routingUiState == RoutingUiState.Idle) onExit()
+            }
         }
     }
 }
@@ -429,6 +442,69 @@ private fun GroupEtaBar(session: GroupSession) {
                     Text("Group", color = Color(0xFF6B7A99), style = MaterialTheme.typography.labelSmall)
                     Text(formatEta(eta), color = Color(0xFFF59E0B), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RoutingSpinner() {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C2E)),
+        ) {
+            Column(
+                Modifier.padding(28.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                CircularProgressIndicator(color = Color(0xFF3B82F6))
+                Spacer(Modifier.height(12.dp))
+                Text("Calculating route…", color = Color.White, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+    }
+}
+
+@Composable
+private fun NoOfflineOverlay(onExit: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C2E)),
+        ) {
+            Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("📥", style = MaterialTheme.typography.displaySmall)
+                Spacer(Modifier.height(8.dp))
+                Text("Region not downloaded", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Download the region for offline routing, or check your connection.",
+                    color = Color(0xFF6B7A99),
+                    style = MaterialTheme.typography.bodySmall,
+                )
+                Spacer(Modifier.height(16.dp))
+                TextButton(onClick = onExit) { Text("Back", color = Color(0xFF3B82F6)) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun RouteErrorOverlay(message: String, onExit: () -> Unit) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C2E)),
+        ) {
+            Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("⚠️", style = MaterialTheme.typography.displaySmall)
+                Spacer(Modifier.height(8.dp))
+                Text("Route unavailable", color = Color.White, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(4.dp))
+                Text(message, color = Color(0xFF6B7A99), style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(16.dp))
+                TextButton(onClick = onExit) { Text("Back", color = Color(0xFF3B82F6)) }
             }
         }
     }

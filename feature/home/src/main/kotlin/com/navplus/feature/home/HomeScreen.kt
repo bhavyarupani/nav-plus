@@ -42,6 +42,7 @@ import com.navplus.core.common.model.LatLng
 fun HomeScreen(
     onSearchTap: () -> Unit,
     onGroupTap: () -> Unit = {},
+    onRegionsTap: () -> Unit = {},
     vm: HomeViewModel = hiltViewModel(),
 ) {
     val connectivity by vm.connectivityState.collectAsStateWithLifecycle()
@@ -72,6 +73,7 @@ fun HomeScreen(
 
         QuickActions(
             onGroupTap = onGroupTap,
+            onRegionsTap = onRegionsTap,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 32.dp, start = 16.dp, end = 16.dp)
@@ -123,7 +125,7 @@ private fun ConnectivityBanner(state: ConnectivityState) {
 }
 
 @Composable
-private fun QuickActions(onGroupTap: () -> Unit, modifier: Modifier = Modifier) {
+private fun QuickActions(onGroupTap: () -> Unit, onRegionsTap: () -> Unit, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -142,6 +144,7 @@ private fun QuickActions(onGroupTap: () -> Unit, modifier: Modifier = Modifier) 
             QuickActionButton(emoji = "☕", label = "Break")
             QuickActionButton(emoji = "⚡", label = "Charge")
             QuickActionButton(emoji = "👥", label = "Group", onClick = onGroupTap)
+            QuickActionButton(emoji = "📥", label = "Regions", onClick = onRegionsTap)
         }
     }
 }

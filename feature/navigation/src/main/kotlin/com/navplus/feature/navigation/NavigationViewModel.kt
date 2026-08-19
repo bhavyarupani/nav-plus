@@ -2,6 +2,7 @@ package com.navplus.feature.navigation
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.navplus.core.common.model.LatLng
 import com.navplus.core.common.model.Location
 import com.navplus.core.group.GroupSyncService
 import com.navplus.core.group.model.GroupSession
@@ -12,8 +13,12 @@ import com.navplus.core.navigation.NavigationEngine
 import com.navplus.core.navigation.NavigationState
 import com.navplus.core.navigation.RoadCharacter
 import com.navplus.core.navigation.RoadCharacterAnalyzer
-import com.navplus.core.regions.BorderCrossingDetector
+import com.navplus.core.navigation.TripRepository
 import com.navplus.core.regions.BorderCrossing
+import com.navplus.core.regions.BorderCrossingDetector
+import com.navplus.core.routing.RoutingEngine
+import com.navplus.core.routing.RoutingRequest
+import com.navplus.core.routing.RoutingResult
 import com.navplus.core.safety.SafetyEngine
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.FlowPreview
@@ -26,12 +31,21 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
+sealed class RoutingUiState {
+    object Idle : RoutingUiState()
+    object Calculating : RoutingUiState()
+    object NoOfflineCoverage : RoutingUiState()
+    data class Error(val message: String) : RoutingUiState()
+}
+
 @OptIn(FlowPreview::class)
 @HiltViewModel
 class NavigationViewModel @Inject constructor(
     private val navigationEngine: NavigationEngine,
     private val locationTracker: LocationTracker,
     private val safetyEngine: SafetyEngine,
+    private val routingEngine: RoutingEngine,
+    private val tripRepository: TripRepository,
     private val lookaheadEngine: LookaheadEngine,
     private val roadCharacterAnalyzer: RoadCharacterAnalyzer,
     private val borderCrossingDetector: BorderCrossingDetector,
@@ -46,6 +60,9 @@ class NavigationViewModel @Inject constructor(
 
     private val _currentLocation = MutableStateFlow<Location?>(null)
     val currentLocation: StateFlow<Location?> = _currentLocation.asStateFlow()
+
+    private val _routingUiState = MutableStateFlow<RoutingUiState>(RoutingUiState.Idle)
+    val routingUiState: StateFlow<RoutingUiState> = _routingUiState.asStateFlow()
 
     private val _lookaheadEvents = MutableStateFlow<List<LookaheadEvent>>(emptyList())
     val lookaheadEvents: StateFlow<List<LookaheadEvent>> = _lookaheadEvents.asStateFlow()
@@ -63,6 +80,14 @@ class NavigationViewModel @Inject constructor(
         viewModelScope.launch {
             locationTracker.locationUpdates().collect { location ->
                 _currentLocation.value = location
+
+                // Wire search → route → navigation: trigger routing as soon as we have a fix
+                val pending = tripRepository.consume()
+                if (pending != null && navState.value == NavigationState.Idle) {
+                    calculateAndStart(location.latLng, pending.destination)
+                    return@collect
+                }
+
                 val state = navState.value
                 if (state is NavigationState.Navigating) {
                     safetyEngine.updatePosition(
@@ -83,7 +108,6 @@ class NavigationViewModel @Inject constructor(
             }
         }
 
-        // Refresh lookahead every time nav state changes meaningfully
         viewModelScope.launch {
             navState.debounce(2_000).collect { state ->
                 if (state is NavigationState.Navigating) {
@@ -101,5 +125,22 @@ class NavigationViewModel @Inject constructor(
         }
     }
 
-    fun stopNavigation() = navigationEngine.stopNavigation()
+    private suspend fun calculateAndStart(origin: LatLng, destination: LatLng) {
+        _routingUiState.value = RoutingUiState.Calculating
+        when (val result = routingEngine.calculateRoutes(RoutingRequest(origin, destination))) {
+            is RoutingResult.Success -> {
+                _routingUiState.value = RoutingUiState.Idle
+                navigationEngine.startNavigation(result.routes.first())
+            }
+            is RoutingResult.NoOfflineCoverage -> _routingUiState.value = RoutingUiState.NoOfflineCoverage
+            is RoutingResult.Error -> _routingUiState.value = RoutingUiState.Error(
+                result.cause.message ?: "Routing failed"
+            )
+        }
+    }
+
+    fun stopNavigation() {
+        navigationEngine.stopNavigation()
+        _routingUiState.value = RoutingUiState.Idle
+    }
 }

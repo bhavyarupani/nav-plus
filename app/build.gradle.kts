@@ -77,6 +77,7 @@ dependencies {
     implementation(project(":feature:navigation"))
     implementation(project(":feature:search"))
     implementation(project(":feature:group"))
+    implementation(project(":feature:regions"))
 
     debugImplementation(libs.compose.ui.tooling)
 }
