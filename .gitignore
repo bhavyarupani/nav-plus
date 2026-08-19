@@ -1,0 +1,33 @@
+# Gradle
+.gradle/
+build/
+**/build/
+*.class
+local.properties
+*.iml
+
+# Android
+*.apk
+*.aab
+*.dex
+*.ap_
+
+# IDE
+.idea/
+*.iws
+*.ipr
+nbproject/
+.DS_Store
+
+# Keys & secrets
+*.keystore
+*.jks
+google-services.json
+local.defaults.properties
+
+# Offline data / large assets
+*.pbf
+*.mbtiles
+*.db
+*.sqlite
+tools/data/
