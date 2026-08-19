@@ -1,10 +1,27 @@
 {
   "regions": [
     {
+      "bboxEast": 10.515,
+      "bboxNorth": 49.7946,
+      "bboxSouth": 47.5308,
+      "bboxWest": 7.5065,
+      "continent": "Europe",
+      "country": "Germany",
+      "countryCode": "DE",
+      "displayName": "Baden-W\u00fcrttemberg",
+      "downloadSizeBytes": 603458752,
+      "formatVersion": 1,
+      "id": "de-bw",
+      "packageUrl": "https://github.com/bhavyarupani/roadpulse/releases/download/regions-v1/de-bw.rpregion",
+      "sha256": "524d59c17429b0be2eaa1ed7c79598118767f95f51bc360e3670667729b73ed1"
+    },
+    {
       "bboxEast": 8.9913,
       "bboxNorth": 53.6106,
       "bboxSouth": 53.0103,
       "bboxWest": 8.481,
+      "continent": "Europe",
+      "country": "Germany",
       "countryCode": "DE",
       "displayName": "Bremen",
       "downloadSizeBytes": 18355073,

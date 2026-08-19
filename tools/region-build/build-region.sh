@@ -20,8 +20,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 CATALOG_CSV="$SCRIPT_DIR/regions-catalog.csv"
 
-SLUG="$(awk -F, -v id="$REGION_ID" 'NR>1 && $1==id {print $3}' "$CATALOG_CSV")"
-if [ -z "$SLUG" ]; then
+GEOFABRIK_PATH="$(awk -F, -v id="$REGION_ID" 'NR>1 && $1==id {print $5}' "$CATALOG_CSV")"
+if [ -z "$GEOFABRIK_PATH" ]; then
   echo "Region '$REGION_ID' not found in $CATALOG_CSV" >&2
   exit 1
 fi
@@ -34,11 +34,11 @@ GRAPHHOPPER_DIR="$WORK_DIR/graphhopper"
 SEARCH_DB="$WORK_DIR/search.db"
 OUTPUT_ARCHIVE="$REPO_ROOT/tools/data/regions/$REGION_ID.rpregion"
 
-echo "=== [1/5] Fetching $SLUG extract ==="
+echo "=== [1/5] Fetching $GEOFABRIK_PATH extract ==="
 if [ -f "$OSM_PBF" ]; then
   echo "Already downloaded: $OSM_PBF"
 else
-  "$SCRIPT_DIR/fetch-extract.sh" "$SLUG" "$OSM_PBF"
+  "$SCRIPT_DIR/fetch-extract.sh" "$GEOFABRIK_PATH" "$OSM_PBF"
 fi
 
 echo "=== [2/5] Building vector tiles (Planetiler) ==="

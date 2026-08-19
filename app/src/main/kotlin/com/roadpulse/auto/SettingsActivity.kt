@@ -64,6 +64,25 @@ class SettingsActivity : Activity() {
     private val regionRowViews = mutableMapOf<String, Pair<TextView, Button>>()
     private var pendingNotificationPermissionAction: (() -> Unit)? = null
 
+    /** Region ids checked in the continent/country tree, pending a "Download selected" tap. */
+    private val selectedRegionIds = mutableSetOf<String>()
+    private var downloadSelectedButton: Button? = null
+
+    /** [RegionDownloadService] only ever runs one download at a time (see its own doc comment) -
+     * "Download selected" queues the rest here and [advanceDownloadQueueIfIdle] starts the next
+     * one each time [regionDownloadListener] sees a download finish. */
+    private val downloadQueue = ArrayDeque<String>()
+
+    private fun queueRegionDownloads(regionIds: List<String>) {
+        downloadQueue.addAll(regionIds)
+        advanceDownloadQueueIfIdle()
+    }
+
+    private fun advanceDownloadQueueIfIdle() {
+        val next = downloadQueue.removeFirstOrNull() ?: return
+        startRegionDownload(next)
+    }
+
     private val regionDownloadListener: (RegionDownloadEvents.Event) -> Unit = { event ->
         when (event) {
             is RegionDownloadEvents.Event.Started ->
@@ -76,7 +95,7 @@ class SettingsActivity : Activity() {
                     val percent = if (event.totalBytes > 0) ((event.bytesRead * 100) / event.totalBytes).toInt() else 0
                     subtitle.text = "Downloading… $percent%"
                 }
-            is RegionDownloadEvents.Event.Finished ->
+            is RegionDownloadEvents.Event.Finished -> {
                 regionRowViews[event.regionId]?.let { (subtitle, button) ->
                     when (val result = event.result) {
                         is RegionDownloadResult.Success -> {
@@ -91,6 +110,8 @@ class SettingsActivity : Activity() {
                         }
                     }
                 }
+                advanceDownloadQueueIfIdle()
+            }
         }
     }
 
@@ -183,9 +204,14 @@ class SettingsActivity : Activity() {
 
     /**
      * Lists every region in the catalog (from [RegionCatalogRepository]) merged with which ones
-     * are actually installed (from [RegionInstallStore]), each with a Download/Delete action and
-     * live progress via [regionDownloadListener]. Matches [dataAndPrivacyCard]'s card/button/
-     * status-line idiom, placed before it since map coverage is the more fundamental concern.
+     * are actually installed (from [RegionInstallStore]), grouped continent -> country -> region
+     * so the list stays navigable as the catalog grows past Germany. Each not-yet-installed
+     * region has a checkbox for multi-select; "Download selected" queues them (see
+     * [queueRegionDownloads]) since [RegionDownloadService] only runs one download at a time.
+     * Live progress on any single row still comes from [regionDownloadListener], unchanged from
+     * the per-region Download/Delete button every row also keeps. Matches [dataAndPrivacyCard]'s
+     * card/button/status-line idiom, placed before it since map coverage is the more fundamental
+     * concern.
      */
     private fun offlineRegionsCard(): android.view.View =
         LinearLayout(this).apply {
@@ -207,6 +233,15 @@ class SettingsActivity : Activity() {
             val rowsContainer = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL }
             addView(rowsContainer, matchWidth(top = 10))
 
+            downloadSelectedButton =
+                makeButton("Download selected", primary = true) {
+                    val ids = selectedRegionIds.toList()
+                    selectedRegionIds.clear()
+                    queueRegionDownloads(ids)
+                    rebuildRegionRows(rowsContainer)
+                }.apply { isEnabled = false }
+            addView(downloadSelectedButton, matchWidth(top = 10))
+
             lateinit var refreshButton: Button
             refreshButton =
                 makeButton("Refresh region list", primary = false) {
@@ -219,7 +254,7 @@ class SettingsActivity : Activity() {
                         }
                     }.start()
                 }
-            addView(refreshButton, matchWidth(top = 10))
+            addView(refreshButton, matchWidth(top = 8))
 
             rebuildRegionRows(rowsContainer)
         }
@@ -227,14 +262,112 @@ class SettingsActivity : Activity() {
     private fun rebuildRegionRows(container: LinearLayout) {
         container.removeAllViews()
         regionRowViews.clear()
+        selectedRegionIds.clear()
+        downloadSelectedButton?.isEnabled = false
         val catalog = regionCatalogRepository.currentCatalog()
         if (catalog.isEmpty()) {
             container.addView(label("No region list available yet - check your connection and try Refresh.", 13f, textMuted))
             return
         }
-        catalog.forEachIndexed { index, region ->
-            container.addView(regionRow(region), matchWidth(top = if (index == 0) 0 else 8))
+        catalog
+            .groupBy(CatalogRegion::continent)
+            .toSortedMap()
+            .forEach { (continent, regions) ->
+                container.addView(continentSection(continent, regions), matchWidth(top = 12))
+            }
+    }
+
+    private fun continentSection(
+        continent: String,
+        regions: List<CatalogRegion>,
+    ): android.view.View {
+        val section = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val body =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = android.view.View.VISIBLE
+            }
+        lateinit var expandLabel: TextView
+        val header =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                setPadding(0, dp(6), 0, dp(6))
+                addView(
+                    label(continent, 14f, Color.WHITE).apply { setTypeface(typeface, Typeface.BOLD) },
+                    LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
+                )
+                expandLabel = label("▾", 14f, accent)
+                addView(expandLabel)
+                setOnClickListener {
+                    val expanding = body.visibility != android.view.View.VISIBLE
+                    body.visibility = if (expanding) android.view.View.VISIBLE else android.view.View.GONE
+                    expandLabel.text = if (expanding) "▾" else "▸"
+                }
+            }
+        section.addView(header)
+        regions
+            .groupBy(CatalogRegion::country)
+            .toSortedMap()
+            .forEach { (country, countryRegions) ->
+                body.addView(countrySection(country, countryRegions), matchWidth(top = 4))
+            }
+        section.addView(body, matchWidth())
+        return section
+    }
+
+    private fun countrySection(
+        country: String,
+        regions: List<CatalogRegion>,
+    ): android.view.View {
+        val section =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(14), 0, 0, 0)
+            }
+        val body =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                visibility = android.view.View.GONE
+            }
+        val installedCount = regions.count { regionInstallStore.isInstalled(it.id) }
+        lateinit var expandLabel: TextView
+        val header =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isClickable = true
+                setPadding(0, dp(6), 0, dp(6))
+                val text = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL }
+                text.addView(label(country, 14f, Color.WHITE))
+                text.addView(
+                    label(
+                        if (regions.size == 1) {
+                            if (installedCount == 1) "Installed" else formatStorageSize(regions[0].downloadSizeBytes)
+                        } else {
+                            "$installedCount/${regions.size} installed"
+                        },
+                        12f,
+                        textMuted,
+                    ),
+                    matchWidth(top = 2),
+                )
+                addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                expandLabel = label("▾", 14f, accent)
+                addView(expandLabel)
+                setOnClickListener {
+                    val expanding = body.visibility != android.view.View.VISIBLE
+                    body.visibility = if (expanding) android.view.View.VISIBLE else android.view.View.GONE
+                    expandLabel.text = if (expanding) "▴" else "▾"
+                }
+            }
+        section.addView(header)
+        regions.sortedBy(CatalogRegion::displayName).forEachIndexed { index, region ->
+            body.addView(regionRow(region), matchWidth(top = if (index == 0) 6 else 8))
         }
+        section.addView(body, matchWidth())
+        return section
     }
 
     private fun regionRow(region: CatalogRegion): android.view.View {
@@ -245,6 +378,22 @@ class SettingsActivity : Activity() {
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(0, dp(7), 0, dp(7))
             }
+
+        if (installed == null) {
+            row.addView(
+                android.widget.CheckBox(this).apply {
+                    isChecked = region.id in selectedRegionIds
+                    setOnCheckedChangeListener { _, checked ->
+                        if (checked) selectedRegionIds.add(region.id) else selectedRegionIds.remove(region.id)
+                        downloadSelectedButton?.isEnabled = selectedRegionIds.isNotEmpty()
+                    }
+                },
+                LinearLayout
+                    .LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                    .also { it.marginEnd = dp(8) },
+            )
+        }
+
         val text = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         text.addView(label(region.displayName, 15f, Color.WHITE))
         val subtitle =

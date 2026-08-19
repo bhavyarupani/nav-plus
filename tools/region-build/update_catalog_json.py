@@ -18,6 +18,18 @@ def sha256_of(path):
     return digest.hexdigest()
 
 
+# ISO 3166-1 alpha-2 codes for every "country" value regions-catalog.csv currently uses.
+COUNTRY_CODES = {
+    "Germany": "DE",
+    "Austria": "AT",
+    "Switzerland": "CH",
+    "Italy": "IT",
+    "Slovakia": "SK",
+    "Slovenia": "SI",
+    "Croatia": "HR",
+}
+
+
 def load_region(catalog_csv, region_id):
     with open(catalog_csv, newline="") as f:
         for row in csv.DictReader(f):
@@ -47,7 +59,9 @@ def main():
     entry = {
         "id": region["id"],
         "displayName": region["displayName"],
-        "countryCode": "DE",
+        "continent": region["continent"],
+        "country": region["country"],
+        "countryCode": COUNTRY_CODES[region["country"]],
         "bboxSouth": float(region["boundsSouth"]),
         "bboxWest": float(region["boundsWest"]),
         "bboxNorth": float(region["boundsNorth"]),

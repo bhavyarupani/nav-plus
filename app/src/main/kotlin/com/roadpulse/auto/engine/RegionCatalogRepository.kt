@@ -12,6 +12,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 data class CatalogRegion(
     val id: String,
     val displayName: String,
+    val continent: String,
+    val country: String,
     val countryCode: String,
     val bounds: RegionBounds,
     val packageUrl: String,
@@ -75,6 +77,12 @@ class RegionCatalogRepository private constructor(
         CatalogRegion(
             id = entry.getString("id"),
             displayName = entry.getString("displayName"),
+            // Every region published so far is in Europe - optString covers a stale cached
+            // catalog.json written before these fields existed, not a real non-European region.
+            // country falls back to the countryCode a stale entry does have, rather than an
+            // empty string that would render as a blank group header in Settings.
+            continent = entry.optString("continent", "Europe"),
+            country = entry.optString("country", entry.optString("countryCode", "Unknown")),
             countryCode = entry.optString("countryCode", ""),
             bounds =
                 RegionBounds(
