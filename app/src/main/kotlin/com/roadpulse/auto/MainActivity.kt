@@ -17,6 +17,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
 import android.os.Looper
 import android.text.Editable
 import android.text.TextUtils
@@ -54,6 +55,7 @@ import com.roadpulse.auto.engine.LocalMbtilesServer
 import com.roadpulse.auto.engine.OfflineSearchEngine
 import com.roadpulse.auto.engine.RegionInstallStore
 import com.roadpulse.auto.engine.SearchResult
+import com.roadpulse.auto.engine.TomTomSearchRepository
 import com.roadpulse.auto.map.MapLibreMapController
 import com.roadpulse.auto.map.MapMarker
 import com.roadpulse.auto.map.MapMarkerIconFactory
@@ -97,6 +99,10 @@ import java.io.File
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.CompletableFuture
+import kotlin.math.asin
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
 
 /**
  * Free-stack: MapLibre Native (rendering) + a local tile server over the bundled Bremen MBTiles
@@ -145,6 +151,7 @@ class MainActivity : FragmentActivity() {
     private val mapMarkerIcons by lazy { MapMarkerIconFactory(this) }
     private val regionInstallStore by lazy { RegionInstallStore(applicationContext) }
     private val searchEngine by lazy { OfflineSearchEngine(regionInstallStore) }
+    private val tomTomSearchRepository by lazy { TomTomSearchRepository(this) }
     private var activeRegionId: String? = null
     private val roadMarkers = mutableListOf<MapMarker>()
     private val trafficPolylines = mutableListOf<MapPolyline>()
@@ -565,20 +572,52 @@ class MainActivity : FragmentActivity() {
                 .setNegativeButton("Cancel", null)
                 .create()
 
+        fun renderResults(results: List<SearchResult>) {
+            searchResults = results
+            adapter.clear()
+            adapter.addAll(
+                results.map { result -> listOfNotNull(result.title, result.subtitle).joinToString(" · ") },
+            )
+            adapter.notifyDataSetChanged()
+        }
+
+        var latestQuery = ""
+        var pendingTomTomQuery: Runnable? = null
+        val searchHandler = Handler(Looper.getMainLooper())
+
         fun runQuery(query: String) {
-            searchEngine
-                .search(query, lastStationaryLocation?.let { RoadCoordinate(it.latitude, it.longitude) })
-                .whenComplete { results, error ->
-                    if (error != null) return@whenComplete
-                    runOnUiThread {
-                        searchResults = results
-                        adapter.clear()
-                        adapter.addAll(
-                            results.map { result -> listOfNotNull(result.title, result.subtitle).joinToString(" · ") },
-                        )
-                        adapter.notifyDataSetChanged()
-                    }
+            latestQuery = query
+            pendingTomTomQuery?.let(searchHandler::removeCallbacks)
+            val nearCoordinate = lastStationaryLocation?.let { RoadCoordinate(it.latitude, it.longitude) }
+
+            // Offline is instant (a local SQLite query) and renders on every keystroke unchanged.
+            // TomTom costs a real network request against a 2,500/day free quota, so it's debounced
+            // to fire once typing pauses rather than once per keystroke - see
+            // TomTomSearchRepository's doc comment.
+            searchEngine.search(query, nearCoordinate).whenComplete { offlineResults, error ->
+                if (error != null || query != latestQuery) return@whenComplete
+                runOnUiThread { renderResults(offlineResults) }
+            }
+
+            if (query.trim().length < MIN_TOMTOM_QUERY_LENGTH) return
+            val tomTomRunnable =
+                Runnable {
+                    Thread {
+                        val tomTomResults = runCatching { tomTomSearchRepository.search(query, nearCoordinate) }.getOrDefault(emptyList())
+                        if (tomTomResults.isEmpty() || query != latestQuery) return@Thread
+                        runOnUiThread {
+                            if (query != latestQuery) return@runOnUiThread
+                            val existing = searchResults
+                            val supplement =
+                                tomTomResults.filterNot { candidate ->
+                                    existing.any { it.isLikelySameAs(candidate) }
+                                }
+                            if (supplement.isNotEmpty()) renderResults(existing + supplement)
+                        }
+                    }.start()
                 }
+            pendingTomTomQuery = tomTomRunnable
+            searchHandler.postDelayed(tomTomRunnable, TOMTOM_SEARCH_DEBOUNCE_MILLIS)
         }
         input.addTextChangedListener(
             object : TextWatcher {
@@ -608,6 +647,29 @@ class MainActivity : FragmentActivity() {
             }
         }
         dialog.show()
+    }
+
+    /** Coarse duplicate check for merging TomTom's online search results with the offline
+     * results already shown - not real place conflation (no unified place model exists yet, see
+     * SEARCH_ARCHITECTURE.md), just enough to avoid showing "IKEA" twice because both sources
+     * found the same store. */
+    private fun SearchResult.isLikelySameAs(other: SearchResult): Boolean {
+        if (!title.equals(other.title, ignoreCase = true)) return false
+        return haversineMetersBetween(coordinate, other.coordinate) <= DEDUPE_DISTANCE_METERS
+    }
+
+    private fun haversineMetersBetween(
+        start: RoadCoordinate,
+        end: RoadCoordinate,
+    ): Double {
+        val lat1 = Math.toRadians(start.latitude)
+        val lat2 = Math.toRadians(end.latitude)
+        val dLat = lat2 - lat1
+        val dLon = Math.toRadians(end.longitude - start.longitude)
+        val h =
+            sin(dLat / 2) * sin(dLat / 2) +
+                cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2)
+        return 2 * 6_371_000.0 * asin(sqrt(h.coerceIn(0.0, 1.0)))
     }
 
     private fun handleSearchResultSelected(result: SearchResult) {
@@ -1766,6 +1828,9 @@ class MainActivity : FragmentActivity() {
         private const val MAX_MAP_ZOOM = 19f
         private const val DESTINATION_ICON_ID = "destination-pin"
         private const val MY_LOCATION_ICON_ID = "my-location-puck"
+        private const val MIN_TOMTOM_QUERY_LENGTH = 2
+        private const val TOMTOM_SEARCH_DEBOUNCE_MILLIS = 400L
+        private const val DEDUPE_DISTANCE_METERS = 75.0
 
         // Bremen's centre - always installed (RoadPulseApplication seeds it on first run), so a
         // reasonable fallback camera position when no GPS fix or destination is available yet,
