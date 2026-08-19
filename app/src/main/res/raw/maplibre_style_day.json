@@ -7,7 +7,6 @@
       "tiles": ["http://127.0.0.1:__PORT__/tiles/{z}/{x}/{y}.pbf"],
       "minzoom": 0,
       "maxzoom": 14,
-      "bounds": [8.48096, 53.01034, 8.99127, 53.61063],
       "attribution": "© OpenMapTiles © OpenStreetMap contributors"
     }
   },

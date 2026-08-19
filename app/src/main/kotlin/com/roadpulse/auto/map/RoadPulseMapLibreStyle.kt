@@ -14,6 +14,13 @@ import com.roadpulse.auto.R
  * color-mapping reference these were hand-matched against) so the app's visual identity is
  * unchanged by the renderer swap.
  *
+ * Deliberately declares no source-level `bounds` either: the local tile server behind `__PORT__`
+ * only ever serves whichever single region is currently active, so a static bounds value baked
+ * into this shared resource would silently cap every *other* region to no detail past its lowest
+ * zoom tiles - confirmed on-device serving Baden-Württemberg through a `bounds` still left over
+ * from this app's original Bremen-only build: MapLibre never requested a single z14 tile for it,
+ * even though the local server had real data at that zoom (verified by fetching it directly).
+ *
  * Deliberately has no label/symbol layers, matching the already-verified-working
  * `maplibre_poc_style.json`: a `symbol` layer with `text-field` but no `glyphs` source stalls
  * MapLibre's entire tile-fetch pipeline for that tile, not just the label layer (root-caused

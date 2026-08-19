@@ -80,6 +80,7 @@ class NavigationActivity : FragmentActivity() {
     private val guidanceEngine by lazy { GraphHopperGuidanceEngine(routingEngine) }
     private var activeRoute: Route? = null
     private var activeRegionId: String? = null
+    private var lastKnownCoordinate: RoadCoordinate? = null
 
     private lateinit var status: TextView
     private lateinit var lanePanel: View
@@ -328,6 +329,12 @@ class NavigationActivity : FragmentActivity() {
             map.setStyle(Style.Builder().fromJson(styleJson)) { style ->
                 val controller = MapLibreMapController(mapView, map, style)
                 mapController = controller
+                // The first GPS fix (synchronous getLastKnownLocation) almost always arrives
+                // before this async style load finishes, so its animateCameraTo call in
+                // onLocationUpdate silently no-ops on a null controller. Without this, a
+                // stationary device (no further fix until a 3m move) is stuck at MapLibre's
+                // default near-zero zoom for the rest of the navigation session.
+                lastKnownCoordinate?.let { controller.animateCameraTo(it, DRIVING_ZOOM) }
                 activeRoute?.let(::drawRoutePolyline)
                 showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
                 showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
@@ -465,6 +472,7 @@ class NavigationActivity : FragmentActivity() {
 
     private fun onLocationUpdate(location: Location) {
         val coordinate = RoadCoordinate(location.latitude, location.longitude)
+        lastKnownCoordinate = coordinate
         guidanceEngine.onLocationUpdate(
             coordinate,
             speedKph = if (location.hasSpeed()) location.speed * 3.6f else null,

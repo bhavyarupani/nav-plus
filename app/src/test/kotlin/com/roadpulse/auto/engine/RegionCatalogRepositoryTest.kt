@@ -80,6 +80,11 @@ class RegionCatalogRepositoryTest {
     fun `currentCatalog serves the cached copy once one exists`() {
         val cacheDir = Files.createTempDirectory("region-catalog-cache-test").toFile()
         val repository = RegionCatalogRepository(cacheDir)
+        // currentCatalog() only skips its network refresh once per process (a deliberate,
+        // production-correct AtomicBoolean shared across every repository instance - see its doc
+        // comment) - burn that one-shot here first so the real fixture write below can't get
+        // clobbered by a live fetch racing in underneath it.
+        repository.currentCatalog()
         File(cacheDir, "catalog.json").writeText(
             """{"schemaVersion":1,"regions":[
                 {"id":"de-hb","displayName":"Bremen","bboxSouth":53.01,"bboxWest":8.48,
