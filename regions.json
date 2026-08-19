@@ -1,0 +1,18 @@
+{
+  "regions": [
+    {
+      "bboxEast": 8.9913,
+      "bboxNorth": 53.6106,
+      "bboxSouth": 53.0103,
+      "bboxWest": 8.481,
+      "countryCode": "DE",
+      "displayName": "Bremen",
+      "downloadSizeBytes": 18355073,
+      "formatVersion": 1,
+      "id": "de-hb",
+      "packageUrl": "https://github.com/bhavyarupani/roadpulse/releases/download/regions-v1/de-hb.rpregion",
+      "sha256": "34d1522bf3af1b7d303ea644454f681ac62f658ebbefbda85c99a9c3f71e831e"
+    }
+  ],
+  "schemaVersion": 1
+}
