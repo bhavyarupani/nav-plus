@@ -153,6 +153,21 @@ WC amenities explicitly included in Autobahn parking records are displayed too. 
 labelled only when the response text explicitly says it is free or paid; otherwise it remains
 unknown.
 
+Autobahn GmbH only ever covers named German Autobahn refs, so outside Germany RoadPulse
+additionally requests live incidents from TomTom's Traffic API
+(`https://api.tomtom.com/traffic/services/5/incidentDetails`) for the visible map bounds. Free,
+self-service, no billing account or credit card required (2,500 non-tile requests/day) - see
+`ZERO_COST_ARCHITECTURE.md`'s "TomTom" section for why this was chosen over the EU's DATEX II
+national-access-point network. Requires a free API key configured the same way as the
+Tankerkoenig/Open Charge Map keys below; the feature is a silent no-op without one. Results are
+cached for three minutes per ~0.2°-grid-snapped bounding box, merged with Autobahn's events, and
+deduplicated by id. Incident type (roadworks/closure/jam/other) comes from TomTom's `iconCategory`;
+delay, road number, and description are shown only when TomTom's response includes them.
+Attribution: `Live traffic outside Germany: TomTom Traffic API`.
+
+- TomTom Traffic API docs: https://developer.tomtom.com/traffic-api/documentation
+- TomTom developer pricing: https://developer.tomtom.com/user/plans
+
 ## DWD warnings and road weather
 
 RoadPulse downloads the official Deutscher Wetterdienst SWSMOS Open Data forecast. DWD describes
@@ -261,6 +276,29 @@ not extracted. Lufop is already represented through the daily Open-GATSO build. 
 Lufop API use requires an API key and an appropriate Pro or Business plan, so RoadPulse does not
 silently use the testing tier. A future Blitzer/SCDB integration requires a written data licence
 and a supported feed or export.
+
+**TomTom Navigation SDK.** Evaluated as a possible replacement for GraphHopper as the core
+routing/turn-by-turn engine. Confirmed via TomTom's own developer documentation that turn-by-turn
+navigation is not part of the free tier ("developers won't be able to access turn-by-turn
+navigation" on the free plan) - it is a paid product. Rejected: GraphHopper is free, unlimited,
+on-device, and works fully offline, which is strictly better on cost and offline-capability than a
+paid cloud SDK. GraphHopper remains the authoritative routing/guidance engine; TomTom is used only
+for what is genuinely free (see "TomTom Traffic API" above).
+
+**DATEX II / EU National Access Points.** Evaluated as a pan-European alternative for live
+traffic/roadworks in Austria, Switzerland, Slovenia, and Croatia. Rejected for now: most national
+feeds (confirmed for Switzerland's ASTRA/opentransportdata.swiss) reference locations through a
+separately-licensed AlertC/TMC location-code table rather than embedding coordinates in the
+message, and obtaining that table is a manual email request with no guaranteed turnaround
+(`verkehrsdaten-plattform@astra.admin.ch`), not a self-service download. Several countries'
+National Access Points also require an organisation-verification registration process (confirmed
+for Austria's mobilitydata.gv.at) rather than instant self-service signup. TomTom's Traffic API
+solves the same problem for free with coordinates included and no location-table dependency.
+
+**Overture Maps / unified place model.** Not started. A future POI-enrichment layer (brand,
+website, phone, opening hours merged from multiple sources into one deduplicated place record) was
+scoped but requires real investigation of Overture's release/licensing/update cadence before any
+implementation - not yet done as of this entry.
 
 ## Organic Maps
 

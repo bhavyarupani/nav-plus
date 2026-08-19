@@ -635,8 +635,9 @@ class MainActivity : FragmentActivity() {
             destinationStatus.text = "Search for a destination first."
             return
         }
-        // NavigationActivity still runs on Google Navigation SDK pending its own free-stack
-        // migration, so this quota guard stays until that's done - see ZERO_COST_ARCHITECTURE.md.
+        // NavigationActivity is fully on the free stack (GraphHopper/MapLibre), but this quota
+        // guard predates that migration and was kept as a deliberate product safety limit rather
+        // than a cost control - see ZERO_COST_ARCHITECTURE.md.
         if (usageGuard.navigationDestinations.snapshot().isExhausted) {
             destinationStatus.text = "The 1,000-destination monthly safety limit is reached."
             return

@@ -6,10 +6,14 @@ import java.util.concurrent.CompletableFuture
 /**
  * Provider-agnostic seams for map rendering, routing, search, and turn-by-turn guidance.
  *
- * These exist so the free-stack migration (MapLibre + GraphHopper + an offline search index) can
- * be built and tested independently of the working Google Navigation SDK path, and swapped in
- * once it reaches parity - see ZERO_COST_ARCHITECTURE.md for the decision record and migration
- * plan. Nothing in the app is wired to these yet; introducing them is step 3 of that plan.
+ * These were introduced so the free-stack migration (MapLibre + GraphHopper + an offline search
+ * index) could be built and tested independently of the Google Navigation SDK path it replaced -
+ * see ZERO_COST_ARCHITECTURE.md for the decision record. That migration is complete:
+ * [RoutingEngine]/[GuidanceEngine]/[SearchEngine] are implemented by
+ * `GraphHopperRoutingEngine`/`GraphHopperGuidanceEngine`/`OfflineSearchEngine` and consumed
+ * directly by `MainActivity`, `NavigationActivity`, and `RoadPulseNavigationScreen`. No
+ * `MapDataProvider` implementation beyond [RegionInstallStore]-backed local files exists, since
+ * remote tile providers were never pursued once the region-download system landed.
  */
 
 data class RoutePoint(

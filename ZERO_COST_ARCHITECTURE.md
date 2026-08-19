@@ -330,3 +330,36 @@ No Google Maps/Navigation/Places SDK code remains reachable from any of the thre
 implementation on `main` is untouched throughout. Remaining work is final cleanup: removing the
 now-unreachable Google-based overloads and the Google Maps/Navigation/Places Gradle dependencies
 themselves.
+
+## Region-download system and multi-country expansion
+
+Built after the above: the single-Bremen bundled-asset approach became a download-on-demand
+region catalog (`RegionInstallStore`, `RegionCatalogRepository`, `RegionDownloadManager`/
+`RegionDownloadService`, `tools/region-build/`), each region a `.rpregion` archive (tiles +
+routing graph + search index) published as a GitHub Release asset and listed in a `regions.json`
+catalog hosted on this repo's own `main` branch - still €0, no new infrastructure. Verified
+end-to-end on-device for Bremen and Baden-Württemberg (map render, search, routing, region-
+boundary switching), then extended to Croatia as the first non-German country (also verified
+on-device via a real search query returning genuine Zagreb results) to prove the pipeline
+generalizes past Germany's Bundesländer. `regions-catalog.csv` now also carries `continent`/
+`country` fields and a `geofabrikPath` (generalized from a Bundesland-only slug) so whole-country
+extracts build with the same `build-region.sh <id>` used throughout. Settings' offline-region list
+became a continent → country → region checkbox tree with bulk "Download selected" (queued, since
+`RegionDownloadService` only runs one download at a time).
+
+## TomTom: routing stays on GraphHopper, traffic is the one TomTom dependency
+
+A later request asked to make TomTom's Navigation SDK the authoritative routing/turn-by-turn
+engine. Checked against TomTom's own developer documentation first, per this document's own
+zero-cost discipline: turn-by-turn navigation is confirmed **not** part of TomTom's free tier -
+their free plan explicitly excludes it, and the Navigation SDK is a paid product. Decision:
+GraphHopper remains the routing/guidance engine (free, unlimited, on-device, fully offline -
+strictly better than a paid cloud SDK on every axis this document tracks). TomTom is used only for
+what's genuinely free: live traffic incidents (`TomTomTrafficRepository`, see
+`THIRD_PARTY_DATA.md`), filling the gap outside Germany that `AutobahnTrafficRepository` (named-
+road-ref, Germany-only) can't reach. The EU's DATEX II National Access Point network was evaluated
+as the "proper" pan-European alternative and rejected for now - most national feeds reference
+locations through a separately-licensed AlertC/TMC location-code table obtained via a manual email
+request, not a self-service download, and several countries' access points require an
+organisation-verification registration process rather than instant signup. TomTom's Traffic API
+has neither problem and needs no billing account, unlike Google Maps Platform.
