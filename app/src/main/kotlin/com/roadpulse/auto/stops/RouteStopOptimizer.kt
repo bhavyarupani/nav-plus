@@ -36,10 +36,13 @@ class RouteStopOptimizer(
 
         fun complete(plan: FreeRouteStopPlan) = mainHandler.post { onComplete(plan) }
 
-        fun statusOf(error: Throwable): RouteRequestStatus =
-            (error as? RouteCalculationException)?.status
-                ?: (error.cause as? RouteCalculationException)?.status
-                ?: RouteRequestStatus.UNKNOWN_ERROR
+        fun statusOf(error: Throwable): RouteRequestStatus {
+            val status =
+                (error as? RouteCalculationException)?.status
+                    ?: (error.cause as? RouteCalculationException)?.status
+            if (status == null) Log.w(TAG, "Route calculation failed with an unrecognized error", error)
+            return status ?: RouteRequestStatus.UNKNOWN_ERROR
+        }
 
         // Only surfaced for REGION_NOT_COVERED today - it's the one status whose exact cause
         // (which region is missing) isn't already obvious from the status name itself.
