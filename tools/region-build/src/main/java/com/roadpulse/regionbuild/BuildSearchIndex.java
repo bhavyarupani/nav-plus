@@ -93,6 +93,9 @@ public final class BuildSearchIndex {
                     connection.commit();
                 }
             }
+            // VACUUM cannot run inside a transaction, and setAutoCommit(false) leaves one open
+            // (JDBC auto-begins a new transaction right after each commit()).
+            connection.setAutoCommit(true);
             try (var statement = connection.createStatement()) {
                 // FTS4 has no separate index step, but VACUUM shrinks the file after the delete
                 // above created it fresh - harmless either way, cheap relative to the scan itself.
