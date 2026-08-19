@@ -98,6 +98,11 @@ enum class RouteRequestStatus {
     LOCATION_UNAVAILABLE,
     CANCELED,
     UNKNOWN_ERROR,
+
+    /** Origin and destination aren't both covered by a single installed [MapRegion] - distinct
+     * from [NO_ROUTE_FOUND] (which means the graph was searched and no path exists) because this
+     * case never reaches GraphHopper at all. The failure message names which region to download. */
+    REGION_NOT_COVERED,
 }
 
 /** Thrown by [RoutingEngine] implementations so callers can recover a [RouteRequestStatus]
@@ -158,12 +163,27 @@ interface SearchEngine {
     ): CompletableFuture<List<SearchResult>>
 }
 
+/** A region's geographic extent - the primary signal used to pick which installed region's tiles/
+ * search index/routing graph cover a given point, without opening any of those files. */
+data class RegionBounds(
+    val south: Double,
+    val west: Double,
+    val north: Double,
+    val east: Double,
+) {
+    fun contains(coordinate: RoadCoordinate): Boolean = coordinate.latitude in south..north && coordinate.longitude in west..east
+}
+
 data class MapRegion(
     val id: String,
     val displayName: String,
+    val bounds: RegionBounds,
     val downloadSizeBytes: Long?,
     val installedSizeBytes: Long?,
     val isDownloaded: Boolean,
+    val packageUrl: String? = null,
+    val sha256: String? = null,
+    val formatVersion: Int = 1,
 )
 
 /** Downloadable regional map/routing-graph package management (Geofabrik-derived packages, not

@@ -1,13 +1,11 @@
 package com.roadpulse.auto.engine
 
-import android.content.Context
 import com.graphhopper.GHRequest
 import com.graphhopper.GraphHopper
 import com.graphhopper.config.CHProfile
 import com.graphhopper.config.Profile
 import com.graphhopper.util.Instruction
 import com.roadpulse.auto.traffic.RoadCoordinate
-import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 
@@ -36,27 +34,26 @@ import java.util.concurrent.Executors
  * this Android integration: correct distance/time and real street names for a Bremen
  * Hauptbahnhof -> Bremen Airport route. See ZERO_COST_ARCHITECTURE.md for the full decision
  * record.
+ *
+ * Region-aware: [regionInstallStore] is the source of truth for which regions are installed and
+ * where on disk their `graphhopper/` directory lives (extracted from an APK asset for the bundled
+ * Bremen region, from a downloaded `.rpregion` archive otherwise) - this class never touches
+ * `context.assets` itself. A route only succeeds if origin and destination fall within the *same*
+ * installed region's bounds; cross-region graph stitching isn't attempted (see
+ * `RouteRequestStatus.REGION_NOT_COVERED`'s doc comment).
  */
 class GraphHopperRoutingEngine(
-    private val context: Context,
-    private val regionAssetDir: String = "graphhopper-bremen",
+    private val regionInstallStore: RegionInstallStore,
 ) : RoutingEngine {
     private val executor = Executors.newSingleThreadExecutor()
 
-    @Volatile
-    private var hopper: GraphHopper? = null
+    // Accessed only from `executor`'s single thread, so a plain mutable map is safe - at most one
+    // loaded GraphHopper graph per installed region for this engine instance's lifetime.
+    private val loadedGraphs = mutableMapOf<String, GraphHopper>()
 
-    private fun ensureLoaded(): GraphHopper {
-        hopper?.let { return it }
-        val graphDir = File(context.filesDir, "graphhopper/$regionAssetDir")
-        if (!graphDir.exists() || graphDir.listFiles().isNullOrEmpty()) {
-            graphDir.mkdirs()
-            context.assets.list(regionAssetDir).orEmpty().forEach { fileName ->
-                context.assets.open("$regionAssetDir/$fileName").use { input ->
-                    File(graphDir, fileName).outputStream().use { output -> input.copyTo(output) }
-                }
-            }
-        }
+    private fun ensureLoaded(region: InstalledRegion): GraphHopper {
+        loadedGraphs[region.id]?.let { return it }
+        val graphDir = region.graphHopperDir
         val newHopper =
             GraphHopper().apply {
                 graphHopperLocation = graphDir.path
@@ -64,7 +61,7 @@ class GraphHopperRoutingEngine(
                 chPreparationHandler.setCHProfiles(CHProfile(PROFILE_NAME))
             }
         check(newHopper.load()) { "GraphHopper graph failed to load from $graphDir" }
-        hopper = newHopper
+        loadedGraphs[region.id] = newHopper
         return newHopper
     }
 
@@ -75,6 +72,23 @@ class GraphHopperRoutingEngine(
         avoidHighways: Boolean,
     ): CompletableFuture<List<Route>> =
         CompletableFuture.supplyAsync({
+            val originRegion = regionInstallStore.regionContaining(origin)
+            val destinationRegion = regionInstallStore.regionContaining(destination)
+            if (originRegion == null || originRegion.id != destinationRegion?.id) {
+                val uncovered =
+                    listOfNotNull(
+                        "origin".takeIf { originRegion == null },
+                        "destination".takeIf { destinationRegion == null },
+                    )
+                val message =
+                    if (uncovered.isNotEmpty()) {
+                        "No downloaded region covers the ${uncovered.joinToString(" or ")}"
+                    } else {
+                        "Origin is in ${originRegion?.displayName} but destination is in " +
+                            "${destinationRegion?.displayName} - download a region covering both"
+                    }
+                throw RouteCalculationException(RouteRequestStatus.REGION_NOT_COVERED, message)
+            }
             val points = listOf(origin) + waypoints + destination
             val request =
                 GHRequest(
@@ -86,7 +100,7 @@ class GraphHopperRoutingEngine(
             request.setProfile(PROFILE_NAME)
             val response =
                 try {
-                    ensureLoaded().route(request)
+                    ensureLoaded(originRegion).route(request)
                 } catch (e: IllegalStateException) {
                     throw RouteCalculationException(
                         RouteRequestStatus.UNKNOWN_ERROR,

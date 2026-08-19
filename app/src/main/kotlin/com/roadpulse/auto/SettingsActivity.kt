@@ -1,11 +1,14 @@
 package com.roadpulse.auto
 
+import android.Manifest
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.pm.PackageManager
 import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.Bundle
 import android.view.Gravity
 import android.view.ViewGroup
@@ -22,6 +25,12 @@ import com.roadpulse.auto.alerts.CameraDataRefreshCoordinator
 import com.roadpulse.auto.alerts.OfficialCameraDataUpdater
 import com.roadpulse.auto.alerts.OpenGatsoDataUpdater
 import com.roadpulse.auto.alerts.OpenStreetMapCameraRepository
+import com.roadpulse.auto.engine.CatalogRegion
+import com.roadpulse.auto.engine.RegionCatalogRepository
+import com.roadpulse.auto.engine.RegionDownloadEvents
+import com.roadpulse.auto.engine.RegionDownloadResult
+import com.roadpulse.auto.engine.RegionDownloadService
+import com.roadpulse.auto.engine.RegionInstallStore
 import com.roadpulse.auto.map.SpeedLimitRoadStyle
 import com.roadpulse.auto.quota.GoogleUsageGuard
 import com.roadpulse.auto.settings.DisplayFilterStore
@@ -46,6 +55,44 @@ class SettingsActivity : Activity() {
     private lateinit var cameraDataRefreshCoordinator: CameraDataRefreshCoordinator
     private lateinit var usageGuard: GoogleUsageGuard
     private var dataRefreshInProgress = false
+    private val regionInstallStore by lazy { RegionInstallStore(this) }
+    private val regionCatalogRepository by lazy { RegionCatalogRepository(this) }
+
+    /** Region id -> that row's (subtitle, action button), rebuilt whenever the offline-regions
+     * card refreshes - lets one listener update whichever row a download event is actually about,
+     * without leaking a new listener per row rebuild. */
+    private val regionRowViews = mutableMapOf<String, Pair<TextView, Button>>()
+    private var pendingNotificationPermissionAction: (() -> Unit)? = null
+
+    private val regionDownloadListener: (RegionDownloadEvents.Event) -> Unit = { event ->
+        when (event) {
+            is RegionDownloadEvents.Event.Started ->
+                regionRowViews[event.regionId]?.let { (subtitle, button) ->
+                    subtitle.text = "Starting download…"
+                    button.isEnabled = false
+                }
+            is RegionDownloadEvents.Event.Progress ->
+                regionRowViews[event.regionId]?.let { (subtitle, _) ->
+                    val percent = if (event.totalBytes > 0) ((event.bytesRead * 100) / event.totalBytes).toInt() else 0
+                    subtitle.text = "Downloading… $percent%"
+                }
+            is RegionDownloadEvents.Event.Finished ->
+                regionRowViews[event.regionId]?.let { (subtitle, button) ->
+                    when (val result = event.result) {
+                        is RegionDownloadResult.Success -> {
+                            subtitle.text = "Installed · ${formatStorageSize(result.region.installedSizeBytes)}"
+                            button.text = "Delete"
+                            button.isEnabled = true
+                        }
+                        is RegionDownloadResult.Failed -> {
+                            subtitle.text = "Download failed: ${result.reason}"
+                            button.text = "Download"
+                            button.isEnabled = true
+                        }
+                    }
+                }
+        }
+    }
 
     private val screenBackground by lazy { ContextCompat.getColor(this, R.color.rp_background) }
     private val panel by lazy { ContextCompat.getColor(this, R.color.rp_panel) }
@@ -65,6 +112,7 @@ class SettingsActivity : Activity() {
         openStreetMapCameraRepository = OpenStreetMapCameraRepository(this)
         cameraDataRefreshCoordinator = CameraDataRefreshCoordinator(this)
         usageGuard = GoogleUsageGuard(this)
+        RegionDownloadEvents.addListener(regionDownloadListener)
 
         val scroll = ScrollView(this).apply { setBackgroundColor(screenBackground) }
         val body =
@@ -100,7 +148,137 @@ class SettingsActivity : Activity() {
             matchWidth(top = 16),
         )
 
+        body.addView(offlineRegionsCard(), matchWidth(top = 20))
         body.addView(dataAndPrivacyCard(), matchWidth(top = 16))
+    }
+
+    override fun onDestroy() {
+        RegionDownloadEvents.removeListener(regionDownloadListener)
+        super.onDestroy()
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode != NOTIFICATION_PERMISSION_REQUEST) return
+        // Proceed regardless of grant result - a denied notification permission just means the
+        // foreground download won't show a progress notification, not that it can't run at all.
+        pendingNotificationPermissionAction?.invoke()
+        pendingNotificationPermissionAction = null
+    }
+
+    private fun startRegionDownload(regionId: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
+        ) {
+            pendingNotificationPermissionAction = { RegionDownloadService.start(this, regionId) }
+            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), NOTIFICATION_PERMISSION_REQUEST)
+            return
+        }
+        RegionDownloadService.start(this, regionId)
+    }
+
+    /**
+     * Lists every region in the catalog (from [RegionCatalogRepository]) merged with which ones
+     * are actually installed (from [RegionInstallStore]), each with a Download/Delete action and
+     * live progress via [regionDownloadListener]. Matches [dataAndPrivacyCard]'s card/button/
+     * status-line idiom, placed before it since map coverage is the more fundamental concern.
+     */
+    private fun offlineRegionsCard(): android.view.View =
+        LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(16))
+            background = roundedPanel(panel, 20)
+
+            addView(
+                label("OFFLINE REGIONS", 12f, accent).apply {
+                    setTypeface(typeface, Typeface.BOLD)
+                    letterSpacing = .1f
+                },
+            )
+            addView(
+                label("Map, routing, and search data for each region you download.", 12f, textMuted),
+                matchWidth(top = 2),
+            )
+
+            val rowsContainer = LinearLayout(this@SettingsActivity).apply { orientation = LinearLayout.VERTICAL }
+            addView(rowsContainer, matchWidth(top = 10))
+
+            lateinit var refreshButton: Button
+            refreshButton =
+                makeButton("Refresh region list", primary = false) {
+                    refreshButton.isEnabled = false
+                    Thread {
+                        regionCatalogRepository.currentCatalog(forceRefresh = true)
+                        runOnUiThread {
+                            rebuildRegionRows(rowsContainer)
+                            refreshButton.isEnabled = true
+                        }
+                    }.start()
+                }
+            addView(refreshButton, matchWidth(top = 10))
+
+            rebuildRegionRows(rowsContainer)
+        }
+
+    private fun rebuildRegionRows(container: LinearLayout) {
+        container.removeAllViews()
+        regionRowViews.clear()
+        val catalog = regionCatalogRepository.currentCatalog()
+        if (catalog.isEmpty()) {
+            container.addView(label("No region list available yet - check your connection and try Refresh.", 13f, textMuted))
+            return
+        }
+        catalog.forEachIndexed { index, region ->
+            container.addView(regionRow(region), matchWidth(top = if (index == 0) 0 else 8))
+        }
+    }
+
+    private fun regionRow(region: CatalogRegion): android.view.View {
+        val installed = regionInstallStore.region(region.id)
+        val row =
+            LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(0, dp(7), 0, dp(7))
+            }
+        val text = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        text.addView(label(region.displayName, 15f, Color.WHITE))
+        val subtitle =
+            label(
+                if (installed != null) {
+                    "Installed · ${formatStorageSize(installed.installedSizeBytes)}"
+                } else {
+                    "Not downloaded · ${formatStorageSize(region.downloadSizeBytes)}"
+                },
+                12f,
+                textMuted,
+            )
+        text.addView(subtitle, matchWidth(top = 2))
+        row.addView(text, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+
+        val actionButton = makeButton(if (installed != null) "Delete" else "Download", primary = installed == null) {}
+        actionButton.setOnClickListener {
+            if (regionInstallStore.isInstalled(region.id)) {
+                regionInstallStore.deleteRegion(region.id)
+                subtitle.text = "Not downloaded · ${formatStorageSize(region.downloadSizeBytes)}"
+                actionButton.text = "Download"
+            } else {
+                startRegionDownload(region.id)
+            }
+        }
+        row.addView(
+            actionButton,
+            LinearLayout
+                .LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+                .also { it.marginStart = dp(12) },
+        )
+
+        regionRowViews[region.id] = subtitle to actionButton
+        return row
     }
 
     private fun filterRow(
@@ -422,6 +600,7 @@ class SettingsActivity : Activity() {
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     companion object {
+        private const val NOTIFICATION_PERMISSION_REQUEST = 4210
         private val PARKED_LAYERS =
             listOf(
                 DisplayLayer.SPEED_CAMERAS,

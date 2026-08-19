@@ -41,10 +41,17 @@ class RouteStopOptimizer(
                 ?: (error.cause as? RouteCalculationException)?.status
                 ?: RouteRequestStatus.UNKNOWN_ERROR
 
+        // Only surfaced for REGION_NOT_COVERED today - it's the one status whose exact cause
+        // (which region is missing) isn't already obvious from the status name itself.
+        fun noteFor(error: Throwable): String? =
+            ((error as? RouteCalculationException) ?: (error.cause as? RouteCalculationException))
+                ?.takeIf { it.status == RouteRequestStatus.REGION_NOT_COVERED }
+                ?.message
+
         if (!enabled.hasEnabledStop) {
             routingEngine.calculateRoute(origin, destination, avoidHighways = avoidHighways).whenComplete { routes, error ->
                 if (error != null) {
-                    complete(FreeRouteStopPlan(route = null, status = statusOf(error)))
+                    complete(FreeRouteStopPlan(route = null, status = statusOf(error), note = noteFor(error)))
                 } else {
                     val route = routes.firstOrNull()
                     complete(
@@ -62,7 +69,7 @@ class RouteStopOptimizer(
         onProgress("Calculating the direct route before optimizing stops…")
         routingEngine.calculateRoute(origin, destination, avoidHighways = avoidHighways).whenComplete { routes, error ->
             if (error != null) {
-                complete(FreeRouteStopPlan(route = null, status = statusOf(error)))
+                complete(FreeRouteStopPlan(route = null, status = statusOf(error), note = noteFor(error)))
                 return@whenComplete
             }
             val direct = routes.firstOrNull()

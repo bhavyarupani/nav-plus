@@ -1,9 +1,7 @@
 package com.roadpulse.auto.engine
 
-import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import com.roadpulse.auto.traffic.RoadCoordinate
-import java.io.File
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.Executors
 import kotlin.math.asin
@@ -15,36 +13,21 @@ import kotlin.math.sqrt
  * On-device destination search, replacing Google Places autocomplete + `FetchPlaceRequest`.
  * Queries a SQLite FTS4 index of named OSM nodes (POIs, places, and address points - shops,
  * amenities, tourism/leisure sites, and `addr:housenumber`+`addr:street` points) built at
- * data-generation time from the same Bremen Geofabrik extract used for map tiles and routing.
- * The index-building tool (`BuildSearchIndex.java`, not part of the app, analogous to
- * Planetiler's role for tiles) scanned 1,661,904 raw OSM elements and produced 25,930 searchable
- * places - see ZERO_COST_ARCHITECTURE.md.
+ * data-generation time from a Geofabrik extract of each region. The index-building tool
+ * (`tools/region-build/BuildSearchIndex.java`, not part of the app, analogous to Planetiler's
+ * role for tiles) produced the first such index - 25,930 places from 1,661,904 raw OSM elements
+ * scanned for Bremen - see ZERO_COST_ARCHITECTURE.md.
  *
- * Query construction is delegated to [OfflineSearchQueryBuilder] (pure, unit-tested) so raw user
- * input can never be interpreted as FTS4 query syntax.
+ * Region-aware: queries *every* currently-installed region's `search.db` (via
+ * [RegionInstallStore]) and merges the results, rather than one hardcoded region - a search near
+ * a state border should surface results from both sides. Query construction is delegated to
+ * [OfflineSearchQueryBuilder] (pure, unit-tested) so raw user input can never be interpreted as
+ * FTS4 query syntax.
  */
 class OfflineSearchEngine(
-    private val context: Context,
-    private val regionAssetPath: String = "search/search-bremen.db",
+    private val regionInstallStore: RegionInstallStore,
 ) : SearchEngine {
     private val executor = Executors.newSingleThreadExecutor()
-
-    @Volatile
-    private var database: SQLiteDatabase? = null
-
-    private fun ensureOpen(): SQLiteDatabase {
-        database?.let { return it }
-        val dbFile = File(context.filesDir, "search/${File(regionAssetPath).name}")
-        if (!dbFile.exists()) {
-            dbFile.parentFile?.mkdirs()
-            context.assets.open(regionAssetPath).use { input ->
-                dbFile.outputStream().use { output -> input.copyTo(output) }
-            }
-        }
-        val opened = SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY)
-        database = opened
-        return opened
-    }
 
     override fun search(
         query: String,
@@ -52,8 +35,22 @@ class OfflineSearchEngine(
     ): CompletableFuture<List<SearchResult>> =
         CompletableFuture.supplyAsync({
             val ftsQuery = OfflineSearchQueryBuilder.buildFtsQuery(query) ?: return@supplyAsync emptyList()
-            val results = mutableListOf<SearchResult>()
-            ensureOpen()
+            val results = regionInstallStore.installedRegions().flatMap { region -> queryRegion(region, ftsQuery) }
+            val sorted = if (nearCoordinate != null) results.sortedBy { haversineMeters(nearCoordinate, it.coordinate) } else results
+            sorted.take(RESULT_LIMIT)
+        }, executor)
+
+    /** Opens a fresh connection per region per call rather than caching one - search happens far
+     * less often than tile requests, and this way an installed/deleted region is always reflected
+     * immediately with no cache to invalidate. */
+    private fun queryRegion(
+        region: InstalledRegion,
+        ftsQuery: String,
+    ): List<SearchResult> {
+        if (!region.searchDbFile.isFile) return emptyList()
+        val results = mutableListOf<SearchResult>()
+        SQLiteDatabase.openDatabase(region.searchDbFile.path, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            db
                 .rawQuery(
                     "SELECT name, subtitle, lat, lon FROM places WHERE places MATCH ? LIMIT $CANDIDATE_LIMIT",
                     arrayOf(ftsQuery),
@@ -67,11 +64,9 @@ class OfflineSearchEngine(
                             )
                     }
                 }
-            if (nearCoordinate != null) {
-                results.sortBy { haversineMeters(nearCoordinate, it.coordinate) }
-            }
-            results.take(RESULT_LIMIT)
-        }, executor)
+        }
+        return results
+    }
 
     private fun haversineMeters(
         start: RoadCoordinate,

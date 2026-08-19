@@ -1,11 +1,9 @@
 package com.roadpulse.auto.engine
 
-import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.util.Log
 import java.io.BufferedOutputStream
 import java.io.File
-import java.io.FileOutputStream
 import java.io.OutputStream
 import java.net.ServerSocket
 import java.net.Socket
@@ -18,10 +16,14 @@ import java.net.Socket
  *
  * Android has no `com.sun.net.httpserver.HttpServer` (JDK-only, not part of the Android API), so
  * this is a small hand-written HTTP/1.1 GET handler rather than a new dependency.
+ *
+ * Takes [tilesFile] directly rather than an asset name - [RegionInstallStore] already places every
+ * installed region's `tiles.mbtiles` at a real filesystem path (seeded from an APK asset for the
+ * bundled region, extracted from a downloaded `.rpregion` archive otherwise), so this class no
+ * longer needs to know about `context.assets` at all.
  */
 class LocalMbtilesServer(
-    private val context: Context,
-    private val assetName: String,
+    private val tilesFile: File,
 ) {
     private var serverSocket: ServerSocket? = null
     private var serverThread: Thread? = null
@@ -31,24 +33,16 @@ class LocalMbtilesServer(
     var port: Int = -1
         private set
 
-    /** Copies the asset to internal storage (SQLite needs a real file path, not a compressed
-     * asset entry) if not already present, opens it, and starts listening. Must be called off
-     * the main thread - this does file I/O and a database open. */
+    /** Opens [tilesFile] and starts listening. Must be called off the main thread - this does a
+     * database open. */
     fun start() {
-        val dbFile = File(context.filesDir, assetName)
-        if (!dbFile.exists() || dbFile.length() == 0L) {
-            context.assets.open(assetName).use { input ->
-                BufferedOutputStream(FileOutputStream(dbFile)).use { output ->
-                    input.copyTo(output)
-                }
-            }
-        }
-        dbPath = dbFile.path
+        check(tilesFile.exists() && tilesFile.length() > 0L) { "Missing or empty tiles file: $tilesFile" }
+        dbPath = tilesFile.path
         // Each request opens its own read-only connection rather than sharing one SQLiteDatabase
         // instance across handler threads - a single shared instance serializes concurrent reads
         // through one connection, which could delay some of the ~6 simultaneous viewport tile
         // queries enough for MapLibre's client-side cancellation to give up on them.
-        SQLiteDatabase.openDatabase(dbFile.path, null, SQLiteDatabase.OPEN_READONLY).use { probe ->
+        SQLiteDatabase.openDatabase(tilesFile.path, null, SQLiteDatabase.OPEN_READONLY).use { probe ->
             Log.d(
                 TAG,
                 "Opened database, tile count check: ${probe.rawQuery("SELECT COUNT(*) FROM tiles", null).use {

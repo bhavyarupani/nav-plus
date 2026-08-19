@@ -28,6 +28,7 @@ import com.roadpulse.auto.driving.UpcomingRouteRoadFeature
 import com.roadpulse.auto.engine.GraphHopperGuidanceEngine
 import com.roadpulse.auto.engine.GraphHopperRoutingEngine
 import com.roadpulse.auto.engine.GuidanceState
+import com.roadpulse.auto.engine.RegionInstallStore
 import com.roadpulse.auto.engine.Route
 import com.roadpulse.auto.map.MapLibreMapController
 import com.roadpulse.auto.map.MapMarker
@@ -74,9 +75,11 @@ class NavigationActivity : FragmentActivity() {
     private var locationManager: LocationManager? = null
     private var locationProvider: String? = null
     private lateinit var voiceGuidance: VoiceGuidance
-    private val routingEngine by lazy { GraphHopperRoutingEngine(applicationContext) }
+    private val regionInstallStore by lazy { RegionInstallStore(applicationContext) }
+    private val routingEngine by lazy { GraphHopperRoutingEngine(regionInstallStore) }
     private val guidanceEngine by lazy { GraphHopperGuidanceEngine(routingEngine) }
     private var activeRoute: Route? = null
+    private var activeRegionId: String? = null
 
     private lateinit var status: TextView
     private lateinit var lanePanel: View
@@ -266,9 +269,52 @@ class NavigationActivity : FragmentActivity() {
 
     private fun setupMap() {
         CompletableFuture
+            .supplyAsync { startTileServerForBestRegion() }
+            .thenAccept { server ->
+                tileServer = server
+                runOnUiThread { server?.let { loadMap(it.port) } ?: showStatus("No offline map downloaded for this area yet.") }
+            }
+    }
+
+    /** Picks whichever installed region covers the device's last-known location, falling back to
+     * the first installed region if location isn't available yet - mirrors `MainActivity`'s
+     * identical logic. Runs off the main thread. */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun startTileServerForBestRegion(): com.roadpulse.auto.engine.LocalMbtilesServer? {
+        val coordinate =
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                val manager = getSystemService(LocationManager::class.java)
+                sequenceOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+                    .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
+                    .maxByOrNull(Location::getTime)
+                    ?.let { RoadCoordinate(it.latitude, it.longitude) }
+            } else {
+                null
+            }
+        val region =
+            coordinate?.let(regionInstallStore::regionContaining)
+                ?: regionInstallStore.installedRegions().firstOrNull()
+                ?: return null
+        activeRegionId = region.id
+        return com.roadpulse.auto.engine
+            .LocalMbtilesServer(region.tilesFile)
+            .apply { start() }
+    }
+
+    /** Same region-boundary handling as `MainActivity.switchActiveRegionIfNeeded` - see its doc
+     * comment for why a brief reload on crossing a region boundary is an accepted v1 trade-off. */
+    private fun switchActiveRegionIfNeeded(controller: MapLibreMapController) {
+        val center = controller.cameraTarget() ?: return
+        val active = activeRegionId?.let(regionInstallStore::region)
+        if (active != null && active.bounds.contains(center)) return
+        val next = regionInstallStore.regionContaining(center) ?: return
+        if (next.id == active?.id) return
+        tileServer?.stop()
+        activeRegionId = next.id
+        CompletableFuture
             .supplyAsync {
                 com.roadpulse.auto.engine
-                    .LocalMbtilesServer(applicationContext, "bremen.mbtiles")
+                    .LocalMbtilesServer(next.tilesFile)
                     .apply { start() }
             }.thenAccept { server ->
                 tileServer = server
@@ -286,6 +332,7 @@ class NavigationActivity : FragmentActivity() {
                 showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
                 showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
                 controller.setOnCameraIdleListener {
+                    switchActiveRegionIfNeeded(controller)
                     showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
                     showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
                 }
@@ -476,7 +523,7 @@ class NavigationActivity : FragmentActivity() {
                     refreshRouteIntelligence(route, force = true)
                 } else {
                     routeRequestIssued = false
-                    showStatus("Route unavailable: ${plan.status.name.replace('_', ' ').lowercase()}.")
+                    showStatus(plan.summary() ?: "Route unavailable: ${plan.status.name.replace('_', ' ').lowercase()}.")
                 }
             }
         }

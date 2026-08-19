@@ -52,6 +52,7 @@ import com.roadpulse.auto.destination.SelectedDestination
 import com.roadpulse.auto.destination.SelectedDestinationStore
 import com.roadpulse.auto.engine.LocalMbtilesServer
 import com.roadpulse.auto.engine.OfflineSearchEngine
+import com.roadpulse.auto.engine.RegionInstallStore
 import com.roadpulse.auto.engine.SearchResult
 import com.roadpulse.auto.map.MapLibreMapController
 import com.roadpulse.auto.map.MapMarker
@@ -140,7 +141,9 @@ class MainActivity : FragmentActivity() {
     private val cameraMarkers = mutableListOf<MapMarker>()
     private val cameraClusterPositions = mutableMapOf<MapMarker, RoadCoordinate>()
     private val mapMarkerIcons by lazy { MapMarkerIconFactory(this) }
-    private val searchEngine by lazy { OfflineSearchEngine(this) }
+    private val regionInstallStore by lazy { RegionInstallStore(applicationContext) }
+    private val searchEngine by lazy { OfflineSearchEngine(regionInstallStore) }
+    private var activeRegionId: String? = null
     private val roadMarkers = mutableListOf<MapMarker>()
     private val trafficPolylines = mutableListOf<MapPolyline>()
     private var cameraSearchInProgress = false
@@ -229,12 +232,58 @@ class MainActivity : FragmentActivity() {
         setContentView(root)
 
         CompletableFuture
-            .supplyAsync { LocalMbtilesServer(applicationContext, "bremen.mbtiles").apply { start() } }
+            .supplyAsync { startTileServerForBestRegion() }
+            .thenAccept { server ->
+                tileServer = server
+                runOnUiThread { server?.let { loadMap(it.port) } }
+            }
+        refreshCameraDataAutomatically()
+    }
+
+    /** Picks whichever installed region covers the device's last-known location, falling back to
+     * the first installed region if location isn't available - Bremen is always at least seeded
+     * by [com.roadpulse.auto.RoadPulseApplication], so this is only ever null if every region has
+     * since been deleted. Runs off the main thread (region lookup + [LocalMbtilesServer.start] both
+     * do file I/O). */
+    @SuppressLint("MissingPermission")
+    private fun startTileServerForBestRegion(): LocalMbtilesServer? {
+        val coordinate =
+            if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                val manager = getSystemService(LocationManager::class.java)
+                sequenceOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+                    .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
+                    .maxByOrNull(Location::getTime)
+                    ?.let { RoadCoordinate(it.latitude, it.longitude) }
+            } else {
+                null
+            }
+        val region =
+            coordinate?.let(regionInstallStore::regionContaining)
+                ?: regionInstallStore.installedRegions().firstOrNull()
+                ?: return null
+        activeRegionId = region.id
+        return LocalMbtilesServer(region.tilesFile).apply { start() }
+    }
+
+    /** If the camera has panned into a different installed region than the one currently being
+     * served, restarts the tile server against that region and reloads the map style. A brief
+     * reload on crossing a region boundary is an accepted v1 trade-off (see
+     * ZERO_COST_ARCHITECTURE.md's "Map-package strategy") - real cross-region tile stitching isn't
+     * attempted. */
+    private fun switchActiveRegionIfNeeded(controller: MapLibreMapController) {
+        val center = controller.cameraTarget() ?: return
+        val active = activeRegionId?.let(regionInstallStore::region)
+        if (active != null && active.bounds.contains(center)) return
+        val next = regionInstallStore.regionContaining(center) ?: return
+        if (next.id == active?.id) return
+        tileServer?.stop()
+        activeRegionId = next.id
+        CompletableFuture
+            .supplyAsync { LocalMbtilesServer(next.tilesFile).apply { start() } }
             .thenAccept { server ->
                 tileServer = server
                 runOnUiThread { loadMap(server.port) }
             }
-        refreshCameraDataAutomatically()
     }
 
     private fun loadMap(port: Int) {
@@ -245,6 +294,7 @@ class MainActivity : FragmentActivity() {
                 val controller = MapLibreMapController(mapView, map, style)
                 mapController = controller
                 controller.setOnCameraIdleListener {
+                    switchActiveRegionIfNeeded(controller)
                     if (cameraLayerEnabled &&
                         !cameraSearchInProgress &&
                         lastStationaryLocation != null
@@ -1691,8 +1741,9 @@ class MainActivity : FragmentActivity() {
         private const val DESTINATION_ICON_ID = "destination-pin"
         private const val MY_LOCATION_ICON_ID = "my-location-puck"
 
-        // Bremen's centre - the only region covered by the bundled tile/routing/search packages
-        // right now (see ZERO_COST_ARCHITECTURE.md's "Map-package strategy"), not all of Germany.
+        // Bremen's centre - always installed (RoadPulseApplication seeds it on first run), so a
+        // reasonable fallback camera position when no GPS fix or destination is available yet,
+        // even though other regions may now be installed too (see RegionInstallStore).
         private val DEFAULT_MAP_CENTER = RoadCoordinate(53.0793, 8.8017)
         private val ROAD_LAYER_BUNDLE =
             listOf(

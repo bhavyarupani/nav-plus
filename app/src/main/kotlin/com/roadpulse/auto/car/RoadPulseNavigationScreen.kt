@@ -42,6 +42,7 @@ import com.roadpulse.auto.engine.GraphHopperGuidanceEngine
 import com.roadpulse.auto.engine.GraphHopperRoutingEngine
 import com.roadpulse.auto.engine.GuidanceState
 import com.roadpulse.auto.engine.LocalMbtilesServer
+import com.roadpulse.auto.engine.RegionInstallStore
 import com.roadpulse.auto.engine.Route
 import com.roadpulse.auto.map.MapLibreMapController
 import com.roadpulse.auto.map.MapMarker
@@ -110,9 +111,11 @@ class RoadPulseNavigationScreen(
     private var speedComplianceRing: com.roadpulse.auto.driving.SpeedComplianceRingView? = null
     private var locationManager: LocationManager? = null
     private val voiceGuidance = VoiceGuidance(carContext)
-    private val routingEngine by lazy { GraphHopperRoutingEngine(carContext.applicationContext) }
+    private val regionInstallStore by lazy { RegionInstallStore(carContext.applicationContext) }
+    private val routingEngine by lazy { GraphHopperRoutingEngine(regionInstallStore) }
     private val guidanceEngine by lazy { GraphHopperGuidanceEngine(routingEngine) }
     private var activeRoute: Route? = null
+    private var activeRegionId: String? = null
     private var guidanceRunning = false
     private val routeStopPreferences = RouteStopPreferencesStore(carContext)
     private val routeStopOptimizer = RouteStopOptimizer(carContext)
@@ -347,10 +350,51 @@ class RoadPulseNavigationScreen(
         speedComplianceRing = newSpeedComplianceRing
 
         CompletableFuture
-            .supplyAsync { LocalMbtilesServer(carContext.applicationContext, "bremen.mbtiles").apply { start() } }
+            .supplyAsync { startTileServerForBestRegion() }
             .thenAccept { server ->
                 tileServer = server
-                Handler(Looper.getMainLooper()).post { loadMap(newMapView, server.port) }
+                Handler(Looper.getMainLooper()).post { server?.let { loadMap(newMapView, it.port) } }
+            }
+    }
+
+    /** Same "pick the region covering the last-known location, falling back to the first
+     * installed region" logic as `MainActivity`/`NavigationActivity`. Runs off the main thread. */
+    @android.annotation.SuppressLint("MissingPermission")
+    private fun startTileServerForBestRegion(): LocalMbtilesServer? {
+        val coordinate =
+            if (carContext.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                val manager = carContext.getSystemService(LocationManager::class.java)
+                sequenceOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER)
+                    .mapNotNull { provider -> runCatching { manager.getLastKnownLocation(provider) }.getOrNull() }
+                    .maxByOrNull(Location::getTime)
+                    ?.let { RoadCoordinate(it.latitude, it.longitude) }
+            } else {
+                null
+            }
+        val region =
+            coordinate?.let(regionInstallStore::regionContaining)
+                ?: regionInstallStore.installedRegions().firstOrNull()
+                ?: return null
+        activeRegionId = region.id
+        return LocalMbtilesServer(region.tilesFile).apply { start() }
+    }
+
+    /** Same region-boundary handling as `MainActivity.switchActiveRegionIfNeeded` - see its doc
+     * comment for why a brief reload on crossing a region boundary is an accepted v1 trade-off. */
+    private fun switchActiveRegionIfNeeded(controller: MapLibreMapController) {
+        val view = mapView ?: return
+        val center = controller.cameraTarget() ?: return
+        val active = activeRegionId?.let(regionInstallStore::region)
+        if (active != null && active.bounds.contains(center)) return
+        val next = regionInstallStore.regionContaining(center) ?: return
+        if (next.id == active?.id) return
+        tileServer?.stop()
+        activeRegionId = next.id
+        CompletableFuture
+            .supplyAsync { LocalMbtilesServer(next.tilesFile).apply { start() } }
+            .thenAccept { server ->
+                tileServer = server
+                Handler(Looper.getMainLooper()).post { loadMap(view, server.port) }
             }
     }
 
@@ -369,6 +413,7 @@ class RoadPulseNavigationScreen(
                 showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
                 showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
                 controller.setOnCameraIdleListener {
+                    switchActiveRegionIfNeeded(controller)
                     refreshTrafficForVisibleMap(controller)
                     showRouteRoadFeatureMarkers(RouteRoadFeatureGuidance.latest)
                     showRouteCameraMarkers(RouteCameraGuidance.latest.cameras)
@@ -517,7 +562,7 @@ class RoadPulseNavigationScreen(
                 } else {
                     updateStatus(
                         "Route unavailable",
-                        plan.status.name
+                        plan.summary() ?: plan.status.name
                             .replace('_', ' ')
                             .lowercase(),
                     )
