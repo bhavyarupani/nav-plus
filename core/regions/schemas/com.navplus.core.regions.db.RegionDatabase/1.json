@@ -1,0 +1,106 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "e6755dabfcda1ecdb50fffd9529b9279",
+    "entities": [
+      {
+        "tableName": "regions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `countryCode` TEXT NOT NULL, `sizeBytes` INTEGER NOT NULL, `status` TEXT NOT NULL, `downloadedAt` INTEGER, `mapUrl` TEXT NOT NULL, `routingUrl` TEXT NOT NULL, `searchUrl` TEXT NOT NULL, `boundsMinLat` REAL NOT NULL, `boundsMinLng` REAL NOT NULL, `boundsMaxLat` REAL NOT NULL, `boundsMaxLng` REAL NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "countryCode",
+            "columnName": "countryCode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "sizeBytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "downloadedAt",
+            "columnName": "downloadedAt",
+            "affinity": "INTEGER",
+            "notNull": false
+          },
+          {
+            "fieldPath": "mapUrl",
+            "columnName": "mapUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routingUrl",
+            "columnName": "routingUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "searchUrl",
+            "columnName": "searchUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "boundsMinLat",
+            "columnName": "boundsMinLat",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "boundsMinLng",
+            "columnName": "boundsMinLng",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "boundsMaxLat",
+            "columnName": "boundsMaxLat",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "boundsMaxLng",
+            "columnName": "boundsMaxLng",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e6755dabfcda1ecdb50fffd9529b9279')"
+    ]
+  }
+}

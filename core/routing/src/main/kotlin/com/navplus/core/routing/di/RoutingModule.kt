@@ -1,7 +1,7 @@
 package com.navplus.core.routing.di
 
+import com.navplus.core.routing.HybridRoutingEngine
 import com.navplus.core.routing.RoutingEngine
-import com.navplus.core.routing.graphhopper.GraphHopperEngine
 import dagger.Binds
 import dagger.Module
 import dagger.hilt.InstallIn
@@ -13,5 +13,5 @@ import javax.inject.Singleton
 abstract class RoutingModule {
     @Binds
     @Singleton
-    abstract fun bindRoutingEngine(impl: GraphHopperEngine): RoutingEngine
+    abstract fun bindRoutingEngine(impl: HybridRoutingEngine): RoutingEngine
 }

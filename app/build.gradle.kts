@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +7,10 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
 }
+
+val localProps = Properties()
+val localPropsFile = rootProject.file("local.properties")
+if (localPropsFile.exists()) localPropsFile.inputStream().use { localProps.load(it) }
 
 android {
     namespace   = "com.navplus.app"
@@ -16,6 +22,8 @@ android {
         targetSdk     = libs.versions.targetSdk.get().toInt()
         versionCode   = 1
         versionName   = "0.1.0"
+
+        buildConfigField("String", "TOMTOM_API_KEY", "\"${localProps.getProperty("TOMTOM_API_KEY", "")}\"")
     }
 
     buildTypes {
@@ -57,10 +65,13 @@ dependencies {
 
     implementation(libs.hilt.android)
     implementation(libs.hilt.navigation.compose)
+    implementation(libs.hilt.work)
     ksp(libs.hilt.compiler)
+    ksp(libs.hilt.work.compiler)
 
     implementation(libs.core.ktx)
     implementation(libs.coroutines.android)
+    implementation(libs.okhttp)
 
     implementation(project(":core:common"))
     implementation(project(":core:connectivity"))
@@ -70,9 +81,12 @@ dependencies {
     implementation(project(":core:safety"))
     implementation(project(":core:search"))
     implementation(project(":core:regions"))
+    implementation(project(":core:group"))
     implementation(project(":feature:home"))
     implementation(project(":feature:navigation"))
     implementation(project(":feature:search"))
+    implementation(project(":feature:group"))
+    implementation(project(":feature:regions"))
 
     debugImplementation(libs.compose.ui.tooling)
 }

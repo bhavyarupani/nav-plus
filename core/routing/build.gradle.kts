@@ -32,6 +32,7 @@ dependencies {
         exclude(group = "org.apache.xmlgraphics")
     }
 
+    implementation(libs.okhttp)
     implementation(project(":core:common"))
     implementation(project(":core:connectivity"))
 

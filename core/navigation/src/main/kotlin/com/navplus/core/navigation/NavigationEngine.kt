@@ -71,6 +71,7 @@ class NavigationEngine @Inject constructor(
         location: Location,
         route: Route,
     ): RouteProgress {
+        if (route.steps.isEmpty() || route.geometry.isEmpty()) return prev
         val snapped = snapToRoute(location.latLng, route)
         val stepIndex = findCurrentStep(snapped, route, prev.currentStepIndex)
         val step = route.steps[stepIndex]
@@ -116,7 +117,9 @@ class NavigationEngine @Inject constructor(
 
     private fun findCurrentStep(location: LatLng, route: Route, hintIndex: Int): Int {
         val steps = route.steps
-        for (i in hintIndex until steps.size) {
+        if (steps.isEmpty()) return 0
+        val start = hintIndex.coerceIn(0, steps.lastIndex)
+        for (i in start until steps.size) {
             if (location.distanceTo(steps[i].endLocation) < STEP_COMPLETION_THRESHOLD_M) continue
             return i
         }

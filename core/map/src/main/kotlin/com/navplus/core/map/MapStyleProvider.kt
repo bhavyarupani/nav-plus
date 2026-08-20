@@ -7,8 +7,8 @@ object MapStyleProvider {
     /** Free online style — no API key required (OpenFreeMap). */
     private const val ONLINE_STYLE = "https://tiles.openfreemap.org/styles/liberty"
 
-    /** Navigation-optimised dark style for active guidance. */
-    private const val ONLINE_NAV_STYLE = "https://tiles.openfreemap.org/styles/fiord-color"
+    /** Navigation-optimised style for active guidance. */
+    private const val ONLINE_NAV_STYLE = "https://tiles.openfreemap.org/styles/liberty"
 
     fun styleUrl(
         connectivity: ConnectivityState,

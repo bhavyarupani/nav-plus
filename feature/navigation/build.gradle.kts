@@ -31,10 +31,13 @@ dependencies {
     ksp(libs.hilt.compiler)
 
     implementation(project(":core:common"))
+    implementation(project(":core:connectivity"))
     implementation(project(":core:map"))
     implementation(project(":core:navigation"))
     implementation(project(":core:safety"))
     implementation(project(":core:routing"))
+    implementation(project(":core:regions"))
+    implementation(project(":core:group"))
 
     debugImplementation(libs.compose.ui.tooling)
 }

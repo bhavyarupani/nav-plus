@@ -42,7 +42,7 @@ fun NavMapView(
         modifier = modifier,
     )
 
-    DisposableEffect(lifecycle) {
+    DisposableEffect(lifecycle, styleUrl) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_START   -> mapView.onStart()
