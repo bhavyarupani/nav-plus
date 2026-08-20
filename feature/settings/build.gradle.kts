@@ -1,15 +1,16 @@
 plugins {
     alias(libs.plugins.android.library)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt)
-    alias(libs.plugins.room)
 }
 
 android {
-    namespace  = "com.navplus.core.safety"
+    namespace  = "com.navplus.feature.settings"
     compileSdk = libs.versions.compileSdk.get().toInt()
     defaultConfig { minSdk = libs.versions.minSdk.get().toInt() }
+    buildFeatures { compose = true }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -17,21 +18,17 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 
-room { schemaDirectory("$projectDir/schemas") }
-
 dependencies {
-    implementation(libs.core.ktx)
-    implementation(libs.coroutines.android)
+    implementation(platform(libs.compose.bom))
+    implementation(libs.compose.ui)
+    implementation(libs.compose.material3)
+    implementation(libs.compose.material.icons)
+    implementation(libs.lifecycle.runtime.compose)
+    implementation(libs.lifecycle.viewmodel.compose)
     implementation(libs.hilt.android)
+    implementation(libs.hilt.navigation.compose)
     ksp(libs.hilt.compiler)
-    implementation(libs.room.runtime)
-    implementation(libs.room.ktx)
-    ksp(libs.room.compiler)
-    implementation(libs.okhttp)
 
-    implementation(project(":core:common"))
-    implementation(project(":core:connectivity"))
-
-    testImplementation(libs.junit)
-    testImplementation(libs.coroutines.test)
+    implementation(project(":core:settings"))
+    implementation(project(":core:map"))
 }

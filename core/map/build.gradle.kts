@@ -30,4 +30,5 @@ dependencies {
 
     implementation(project(":core:common"))
     implementation(project(":core:connectivity"))
+    implementation(project(":core:settings"))
 }

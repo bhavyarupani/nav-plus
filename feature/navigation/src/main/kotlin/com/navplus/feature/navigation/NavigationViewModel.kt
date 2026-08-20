@@ -4,6 +4,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.navplus.core.common.model.LatLng
 import com.navplus.core.common.model.Location
+import com.navplus.core.common.model.Route
+import com.navplus.core.settings.SettingsRepository
+import com.navplus.core.settings.UserSettings
 import com.navplus.core.group.GroupSyncService
 import com.navplus.core.group.model.GroupSession
 import com.navplus.core.navigation.LookaheadEngine
@@ -36,6 +39,12 @@ sealed class RoutingUiState {
     object Calculating : RoutingUiState()
     object NoOfflineCoverage : RoutingUiState()
     data class Error(val message: String) : RoutingUiState()
+    data class RouteReady(
+        val route: Route,
+        val distanceMeters: Double,
+        val durationSeconds: Long,
+        val destinationName: String,
+    ) : RoutingUiState()
 }
 
 @OptIn(FlowPreview::class)
@@ -50,6 +59,7 @@ class NavigationViewModel @Inject constructor(
     private val roadCharacterAnalyzer: RoadCharacterAnalyzer,
     private val borderCrossingDetector: BorderCrossingDetector,
     private val groupSyncService: GroupSyncService,
+    private val settingsRepository: SettingsRepository,
 ) : ViewModel() {
 
     val navState: StateFlow<NavigationState> = navigationEngine.state
@@ -76,6 +86,9 @@ class NavigationViewModel @Inject constructor(
     val groupSession: StateFlow<GroupSession?> = groupSyncService.session
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val settings: StateFlow<UserSettings> = settingsRepository.settings
+        .stateIn(viewModelScope, SharingStarted.Eagerly, UserSettings())
+
     init {
         // Prevent NavigationScreen from immediately exiting while waiting for first location fix
         if (tripRepository.pending.value != null) {
@@ -89,7 +102,7 @@ class NavigationViewModel @Inject constructor(
                 // Wire search → route → navigation: trigger routing as soon as we have a fix
                 val pending = tripRepository.consume()
                 if (pending != null && navState.value == NavigationState.Idle) {
-                    calculateAndStart(location.latLng, pending.destination)
+                    calculateAndStart(location.latLng, pending.destination, pending.destinationName)
                     return@collect
                 }
 
@@ -130,18 +143,36 @@ class NavigationViewModel @Inject constructor(
         }
     }
 
-    private suspend fun calculateAndStart(origin: LatLng, destination: LatLng) {
+    private suspend fun calculateAndStart(origin: LatLng, destination: LatLng, destinationName: String) {
         _routingUiState.value = RoutingUiState.Calculating
-        when (val result = routingEngine.calculateRoutes(RoutingRequest(origin, destination))) {
+        val s = settings.value
+        val request = RoutingRequest(
+            origin = origin,
+            destination = destination,
+            avoidTolls = s.avoidTolls,
+            avoidHighways = s.avoidHighways,
+            avoidFerries = s.avoidFerries,
+        )
+        when (val result = routingEngine.calculateRoutes(request)) {
             is RoutingResult.Success -> {
-                _routingUiState.value = RoutingUiState.Idle
-                navigationEngine.startNavigation(result.routes.first())
+                val route = result.routes.first()
+                _routingUiState.value = RoutingUiState.RouteReady(
+                    route = route,
+                    distanceMeters = route.distanceMeters,
+                    durationSeconds = route.durationSeconds,
+                    destinationName = destinationName,
+                )
             }
             is RoutingResult.NoOfflineCoverage -> _routingUiState.value = RoutingUiState.NoOfflineCoverage
             is RoutingResult.Error -> _routingUiState.value = RoutingUiState.Error(
                 result.cause.message ?: "Routing failed"
             )
         }
+    }
+
+    fun startNavigation(route: Route) {
+        _routingUiState.value = RoutingUiState.Idle
+        navigationEngine.startNavigation(route)
     }
 
     fun stopNavigation() {
