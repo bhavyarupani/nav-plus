@@ -27,7 +27,11 @@ class NavigationEngine @Inject constructor(
     private val _state = MutableStateFlow<NavigationState>(NavigationState.Idle)
     val state: StateFlow<NavigationState> = _state.asStateFlow()
 
+    private var trackingJob: kotlinx.coroutines.Job? = null
+
     fun startNavigation(route: Route) {
+        // Cancel any running trackLocation before starting a new one to prevent races.
+        trackingJob?.cancel()
         _state.value = NavigationState.Navigating(
             RouteProgress(
                 route = route,
@@ -35,7 +39,7 @@ class NavigationEngine @Inject constructor(
                 distanceToNextStepMeters = route.steps.firstOrNull()?.distanceMeters ?: 0.0,
                 distanceRemainingMeters = route.distanceMeters,
                 durationRemainingSeconds = route.durationSeconds,
-                snappedLocation = route.waypoints.first(),
+                snappedLocation = route.waypoints.firstOrNull() ?: LatLng(0.0, 0.0),
                 nextManeuver = route.steps.firstOrNull()?.maneuver
                     ?: com.navplus.core.common.model.Maneuver.STRAIGHT,
                 nextInstruction = route.steps.firstOrNull()?.instruction ?: "",
@@ -45,10 +49,12 @@ class NavigationEngine @Inject constructor(
                 speedLimitKph = route.steps.firstOrNull()?.speedLimitKph,
             )
         )
-        scope.launch { trackLocation(route) }
+        trackingJob = scope.launch { trackLocation(route) }
     }
 
     fun stopNavigation() {
+        trackingJob?.cancel()
+        trackingJob = null
         _state.value = NavigationState.Idle
     }
 
@@ -74,6 +80,7 @@ class NavigationEngine @Inject constructor(
         if (route.steps.isEmpty() || route.geometry.isEmpty()) return prev
         val snapped = snapToRoute(location.latLng, route)
         val stepIndex = findCurrentStep(snapped, route, prev.currentStepIndex)
+        if (stepIndex !in route.steps.indices) return prev
         val step = route.steps[stepIndex]
         val distToStep = snapped.distanceTo(step.endLocation)
         val distRemaining = route.steps.drop(stepIndex + 1).sumOf { it.distanceMeters } + distToStep

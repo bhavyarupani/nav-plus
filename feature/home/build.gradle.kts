@@ -35,6 +35,7 @@ dependencies {
     implementation(project(":core:map"))
     implementation(project(":core:navigation"))
     implementation(project(":core:safety"))
+    implementation(project(":core:settings"))
     implementation(project(":core:search"))
 
     debugImplementation(libs.compose.ui.tooling)

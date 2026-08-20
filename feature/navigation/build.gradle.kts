@@ -38,6 +38,7 @@ dependencies {
     implementation(project(":core:routing"))
     implementation(project(":core:regions"))
     implementation(project(":core:group"))
+    implementation(project(":core:settings"))
 
     debugImplementation(libs.compose.ui.tooling)
 }
