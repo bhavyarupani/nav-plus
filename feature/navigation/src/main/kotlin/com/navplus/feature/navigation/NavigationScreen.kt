@@ -55,6 +55,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -147,6 +148,12 @@ fun NavigationScreen(
     val bearing = activeProgress?.routeBearingDeg ?: location?.bearingDeg ?: 0f
     val routeGeometry: List<LatLng>? =
         activeProgress?.route?.geometry
+    val routePulseColor =
+        if (settings.realWorldFeelEnabled && settings.showAmbientRoutePulse) {
+            realWorldFrame.atmosphere.routePulseColor
+        } else {
+            "#3B82F6"
+        }
     val previewRoutes = readyState?.choices
         ?.map { MapRouteLine(id = it.route.id, geometry = it.route.geometry) }
         .orEmpty()
@@ -223,6 +230,7 @@ fun NavigationScreen(
             routeGeometry = routeGeometry,
             routeAlternatives = previewRoutes,
             selectedRouteId = readyState?.selectedRouteId,
+            routePulseColor = routePulseColor,
             cameras = routeCameraMarkers,
             convoyMembers = convoyMapMembers,
             realWorldMarkers = realWorldMarkers,
@@ -236,6 +244,7 @@ fun NavigationScreen(
         RealWorldAtmosphereOverlay(
             frame = realWorldFrame,
             enabled = settings.realWorldFeelEnabled,
+            ambientRoutePulseEnabled = settings.showAmbientRoutePulse,
             reduceMotion = settings.reduceMotion,
         )
 
@@ -371,11 +380,20 @@ private fun NavigationHud(
 private fun RealWorldAtmosphereOverlay(
     frame: RealWorldFrame,
     enabled: Boolean,
+    ambientRoutePulseEnabled: Boolean,
     reduceMotion: Boolean,
 ) {
     if (!enabled || frame == RealWorldFrame.Empty) return
     val atmosphere = frame.atmosphere
-    val baseColor = atmosphere.routePulseColor.toComposeColor()
+    val baseColor = if (ambientRoutePulseEnabled) {
+        atmosphere.routePulseColor.toComposeColor()
+    } else {
+        "#3B82F6".toComposeColor()
+    }
+    val hasWind = frame.cues.any { it.type == RealWorldCueType.WIND_FLOW }
+    val hasStorm = frame.cues.any { it.type == RealWorldCueType.STORM_CELL }
+    val hasMoon = frame.cues.any { it.type == RealWorldCueType.MOON_NIGHT_SKY }
+    val hasRouteWeather = frame.cues.any { it.type == RealWorldCueType.ROUTE_WEATHER || it.type == RealWorldCueType.FOG_DEPTH }
     val alpha = (atmosphere.intensity * 0.14f).coerceIn(0.02f, 0.10f)
     Canvas(
         modifier = Modifier
@@ -392,6 +410,50 @@ private fun RealWorldAtmosphereOverlay(
             )
         )
         if (reduceMotion) return@Canvas
+        if (hasWind) {
+            repeat(10) { index ->
+                val x = size.width * ((index * 23 % 100) / 100f)
+                val y = size.height * (0.28f + ((index * 17 % 42) / 100f))
+                drawLine(
+                    color = Color(0xFF7DD3FC).copy(alpha = 0.13f),
+                    start = Offset(x, y),
+                    end = Offset(x + size.width * 0.16f, y - 18f),
+                    strokeWidth = 2.4f,
+                    cap = StrokeCap.Round,
+                )
+            }
+        }
+        if (hasStorm) {
+            drawCircle(
+                color = Color(0xFF2563EB).copy(alpha = 0.08f),
+                radius = size.minDimension * 0.18f,
+                center = Offset(size.width * 0.76f, size.height * 0.34f),
+            )
+        }
+        if (hasMoon) {
+            drawCircle(
+                color = Color(0xFFE0E7FF).copy(alpha = 0.16f),
+                radius = size.minDimension * 0.035f,
+                center = Offset(size.width * 0.82f, size.height * 0.18f),
+            )
+            repeat(8) { index ->
+                drawCircle(
+                    color = Color.White.copy(alpha = 0.12f),
+                    radius = 1.5f,
+                    center = Offset(
+                        x = size.width * (0.18f + ((index * 11 % 64) / 100f)),
+                        y = size.height * (0.10f + ((index * 7 % 20) / 100f)),
+                    ),
+                )
+            }
+        }
+        if (hasRouteWeather && atmosphere.sky != RealWorldSky.FOG) {
+            drawRect(
+                color = baseColor.copy(alpha = 0.045f),
+                topLeft = Offset(0f, size.height * 0.38f),
+                size = Size(size.width, size.height * 0.28f),
+            )
+        }
         when (atmosphere.sky) {
             RealWorldSky.RAIN -> {
                 repeat(18) { index ->

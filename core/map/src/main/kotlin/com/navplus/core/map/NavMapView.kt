@@ -101,6 +101,7 @@ fun NavMapView(
     routeGeometry: List<LatLng>? = null,
     routeAlternatives: List<MapRouteLine> = emptyList(),
     selectedRouteId: String? = null,
+    routePulseColor: String = "#3B82F6",
     cameras: List<CameraMarker> = emptyList(),
     convoyMembers: List<ConvoyMapMember> = emptyList(),
     realWorldMarkers: List<RealWorldMapMarker> = emptyList(),
@@ -203,9 +204,9 @@ fun NavMapView(
     }
 
     // Route polyline — redraws when map or geometry changes, and after style reload.
-    LaunchedEffect(mapRef, styleTick, routeGeometry, routeAlternatives, selectedRouteId) {
+    LaunchedEffect(mapRef, styleTick, routeGeometry, routeAlternatives, selectedRouteId, routePulseColor) {
         val map = mapRef ?: return@LaunchedEffect
-        updateRouteLayer(map, if (routeAlternatives.isEmpty()) routeGeometry else null)
+        updateRouteLayer(map, if (routeAlternatives.isEmpty()) routeGeometry else null, routePulseColor)
         updateRouteAlternativesLayer(map, routeAlternatives, selectedRouteId)
     }
 
@@ -293,7 +294,7 @@ fun NavMapView(
         updateCameraLayer(map, cameras)
         updateConvoyLayer(map, convoyMembers)
         updateRealWorldLayer(map, realWorldMarkers)
-        updateRouteLayer(map, if (routeAlternatives.isEmpty()) routeGeometry else null)
+        updateRouteLayer(map, if (routeAlternatives.isEmpty()) routeGeometry else null, routePulseColor)
         updateRouteAlternativesLayer(map, routeAlternatives, selectedRouteId)
         if (vehicleType != null) registerVehicleIcon(map, context, vehicleType, density)
         fireViewport(map, currentOnCameraIdle.value)
@@ -435,7 +436,7 @@ private fun lerpBearing(from: Float, to: Float, t: Float): Float {
     return ((from + delta * t) % 360f + 360f) % 360f
 }
 
-private fun updateRouteLayer(map: MapLibreMap, geometry: List<LatLng>?) {
+private fun updateRouteLayer(map: MapLibreMap, geometry: List<LatLng>?, routePulseColor: String) {
     val style = map.style ?: return
     if (style.getLayer(ROUTE_LINE_ID) != null) style.removeLayer(ROUTE_LINE_ID)
     if (style.getLayer(ROUTE_CASING_ID) != null) style.removeLayer(ROUTE_CASING_ID)
@@ -454,7 +455,7 @@ private fun updateRouteLayer(map: MapLibreMap, geometry: List<LatLng>?) {
         PropertyFactory.lineOpacity(0.6f),
     ))
     style.addLayer(LineLayer(ROUTE_LINE_ID, ROUTE_SOURCE_ID).withProperties(
-        PropertyFactory.lineColor("#3B82F6"),
+        PropertyFactory.lineColor(safeHexColor(routePulseColor)),
         PropertyFactory.lineWidth(8f),
         PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
         PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),

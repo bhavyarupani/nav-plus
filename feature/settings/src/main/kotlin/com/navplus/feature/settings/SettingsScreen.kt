@@ -558,14 +558,24 @@ private fun RealWorldFeelPage(settings: UserSettings, vm: SettingsViewModel) {
         item { ToggleRow("Airport approach", "Show subtle runway approach/departure context near airports", settings.showAirportApproach, vm::setShowAirportApproach) }
         item { ToggleRow("Sky and light", "Match the map mood to rain, fog, snow, sunset and night", settings.showSkyAndLightReality, vm::setShowSkyAndLightReality) }
         item { ToggleRow("Sun glare", "Warn when low sun is in the windshield or side-window direction", settings.showSunGlareWarning, vm::setShowSunGlareWarning) }
+        item { ToggleRow("Real weather ahead", "Render rain, snow or fog only in the affected route corridor", settings.showRealWeatherAhead, vm::setShowRealWeatherAhead) }
+        item { ToggleRow("Fog depth layer", "Fade the route slightly when low visibility is ahead", settings.showFogDepthLayer, vm::setShowFogDepthLayer) }
+        item { ToggleRow("Storm cell encounter", "Show where forecast rain crosses your ETA on the route", settings.showStormCellEncounter, vm::setShowStormCellEncounter) }
+        item { ToggleRow("Moon and night sky", "Subtle clear-night ambience on rural roads", settings.showMoonNightSky, vm::setShowMoonNightSky) }
         item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
         item { SectionLabel("Places ahead") }
         item { ToggleRow("Rail crossing intelligence", "Check route ETA against nearby train movement when available", settings.showRailCrossingIntelligence, vm::setShowRailCrossingIntelligence) }
         item { ToggleRow("Roadside landmarks", "Show visible landmarks only in calm driving moments", settings.showRoadsideLandmarks, vm::setShowRoadsideLandmarks) }
         item { ToggleRow("Water, ferry and bridge moments", "Show rivers, bridge context and ferry timing when relevant", settings.showWaterFerryBridgeMoments, vm::setShowWaterFerryBridgeMoments) }
         item { ToggleRow("Event crowd pulse", "Show crowd/exit traffic zones near venues, stations and airports", settings.showEventCrowdPulse, vm::setShowEventCrowdPulse) }
+        item { ToggleRow("Emergency awareness", "Show official emergency closures or response zones only on your route", settings.showEmergencyVehicleAwareness, vm::setShowEmergencyVehicleAwareness) }
+        item { ToggleRow("Visible hazard scene", "Minimal icon for roadworks, accident or closure scenes ahead", settings.showVisibleHazardScene, vm::setShowVisibleHazardScene) }
         item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
         item { SectionLabel("Road feel") }
+        item { ToggleRow("Ambient route pulse", "Route color breathes for calm, traffic, weather, GPS or emergency state", settings.showAmbientRoutePulse, vm::setShowAmbientRoutePulse) }
+        item { ToggleRow("Wind flow", "Show subtle crosswind streaks on exposed roads, bridges and mountains", settings.showWindFlow, vm::setShowWindFlow) }
+        item { ToggleRow("Road surface feel", "Reflect wet, icy, gravel or rough surfaces when relevant", settings.showRoadSurfaceFeel, vm::setShowRoadSurfaceFeel) }
+        item { ToggleRow("Destination arrival mood", "Prepare parking, walking handoff and destination weather near arrival", settings.showDestinationArrivalMood, vm::setShowDestinationArrivalMood) }
         item { ToggleRow("Wildlife risk", "Subtle rural dusk/night caution when risk is meaningful", settings.showWildlifeRiskAtmosphere, vm::setShowWildlifeRiskAtmosphere) }
         item { ToggleRow("Road feel mode", "Reflect tunnel, bridge, forest, mountain, city and open-road context", settings.showRoadFeelMode, vm::setShowRoadFeelMode) }
         item { Spacer(Modifier.height(32.dp)) }

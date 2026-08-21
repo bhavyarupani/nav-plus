@@ -161,6 +161,16 @@ class SettingsViewModel @Inject constructor(
     fun setShowWildlifeRiskAtmosphere(v: Boolean)    = launch { repo.setShowWildlifeRiskAtmosphere(v) }
     fun setShowEventCrowdPulse(v: Boolean)           = launch { repo.setShowEventCrowdPulse(v) }
     fun setShowRoadFeelMode(v: Boolean)              = launch { repo.setShowRoadFeelMode(v) }
+    fun setShowWindFlow(v: Boolean)                  = launch { repo.setShowWindFlow(v) }
+    fun setShowFogDepthLayer(v: Boolean)             = launch { repo.setShowFogDepthLayer(v) }
+    fun setShowStormCellEncounter(v: Boolean)        = launch { repo.setShowStormCellEncounter(v) }
+    fun setShowAmbientRoutePulse(v: Boolean)         = launch { repo.setShowAmbientRoutePulse(v) }
+    fun setShowEmergencyVehicleAwareness(v: Boolean) = launch { repo.setShowEmergencyVehicleAwareness(v) }
+    fun setShowRoadSurfaceFeel(v: Boolean)           = launch { repo.setShowRoadSurfaceFeel(v) }
+    fun setShowDestinationArrivalMood(v: Boolean)    = launch { repo.setShowDestinationArrivalMood(v) }
+    fun setShowRealWeatherAhead(v: Boolean)          = launch { repo.setShowRealWeatherAhead(v) }
+    fun setShowMoonNightSky(v: Boolean)              = launch { repo.setShowMoonNightSky(v) }
+    fun setShowVisibleHazardScene(v: Boolean)        = launch { repo.setShowVisibleHazardScene(v) }
 
     // Voice
     fun setVoiceGuidanceMode(v: VoiceGuidanceMode)   = launch { repo.setVoiceGuidanceMode(v) }

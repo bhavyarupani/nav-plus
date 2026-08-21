@@ -299,6 +299,16 @@ data class UserSettings(
     val showWildlifeRiskAtmosphere: Boolean = true,
     val showEventCrowdPulse: Boolean = true,
     val showRoadFeelMode: Boolean = true,
+    val showWindFlow: Boolean = true,
+    val showFogDepthLayer: Boolean = true,
+    val showStormCellEncounter: Boolean = true,
+    val showAmbientRoutePulse: Boolean = true,
+    val showEmergencyVehicleAwareness: Boolean = true,
+    val showRoadSurfaceFeel: Boolean = true,
+    val showDestinationArrivalMood: Boolean = true,
+    val showRealWeatherAhead: Boolean = true,
+    val showMoonNightSky: Boolean = true,
+    val showVisibleHazardScene: Boolean = true,
 
     // ── Voice & alerts ────────────────────────────────────────────────────────
     val voiceGuidanceMode: VoiceGuidanceMode = VoiceGuidanceMode.FULL,

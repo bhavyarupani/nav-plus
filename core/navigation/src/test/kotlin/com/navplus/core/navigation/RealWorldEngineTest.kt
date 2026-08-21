@@ -13,8 +13,43 @@ class RealWorldEngineTest {
 
     @Test
     fun simulationFrameCoversEveryRealWorldCueType() {
-        val frame = engine.simulationFrame()
-        val types = frame.cues.map { it.type }.toSet()
+        val origin = LatLng(48.3538, 11.7861)
+        val route = airportRoute(origin).copy(hasHighways = true)
+        val frames = listOf(
+            engine.simulationFrame(),
+            engine.frameAhead(
+                route = route,
+                currentPosition = origin,
+                headingDeg = 25f,
+                distanceFromStartMeters = 0.0,
+                currentSpeedKph = 70f,
+                options = RealWorldOptions(),
+                environment = clearEvening().copy(
+                    now = LocalDateTime.of(2026, 8, 21, 19, 30),
+                    cloudCoverPercent = 10,
+                    precipitationMm = 0.0,
+                    visibilityMeters = 30_000.0,
+                ),
+                maxCues = RealWorldCueType.entries.size,
+            ),
+            engine.frameAhead(
+                route = route,
+                currentPosition = origin,
+                headingDeg = 62f,
+                distanceFromStartMeters = 0.0,
+                currentSpeedKph = 70f,
+                options = RealWorldOptions(),
+                environment = clearEvening().copy(
+                    now = LocalDateTime.of(2026, 8, 21, 22, 30),
+                    cloudCoverPercent = 10,
+                    precipitationMm = 0.0,
+                    visibilityMeters = 30_000.0,
+                    moonVisible = true,
+                ),
+                maxCues = RealWorldCueType.entries.size,
+            ),
+        )
+        val types = frames.flatMap { it.cues }.map { it.type }.toSet()
 
         RealWorldCueType.entries.forEach { type ->
             assertTrue("Missing $type", type in types)
@@ -78,6 +113,150 @@ class RealWorldEngineTest {
 
         assertEquals(RealWorldSky.RAIN, frame.atmosphere.sky)
         assertTrue(frame.cues.any { it.type == RealWorldCueType.SKY_LIGHT })
+    }
+
+    @Test
+    fun strongCrosswindOnExposedRoadCreatesWindCue() {
+        val origin = LatLng(48.3538, 11.7861)
+        val frame = engine.frameAhead(
+            route = airportRoute(origin).copy(hasHighways = true),
+            currentPosition = origin,
+            headingDeg = 70f,
+            distanceFromStartMeters = 0.0,
+            currentSpeedKph = 90f,
+            options = RealWorldOptions(),
+            environment = clearEvening().copy(windGustKph = 68.0),
+            maxCues = RealWorldCueType.entries.size,
+        )
+
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.WIND_FLOW })
+    }
+
+    @Test
+    fun fogAndRouteWeatherCuesUseLowVisibilityAhead() {
+        val origin = LatLng(48.3538, 11.7861)
+        val frame = engine.frameAhead(
+            route = airportRoute(origin),
+            currentPosition = origin,
+            headingDeg = 70f,
+            distanceFromStartMeters = 0.0,
+            currentSpeedKph = 60f,
+            options = RealWorldOptions(),
+            environment = clearEvening().copy(
+                visibilityMeters = 1_500.0,
+                fogRisk = true,
+                humidityPercent = 96,
+            ),
+            maxCues = RealWorldCueType.entries.size,
+        )
+
+        assertEquals(RealWorldSky.FOG, frame.atmosphere.sky)
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.FOG_DEPTH })
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.ROUTE_WEATHER })
+    }
+
+    @Test
+    fun stormEmergencyHazardSurfaceAndArrivalCuesStayRouteRelevant() {
+        val origin = LatLng(48.3538, 11.7861)
+        val frame = engine.frameAhead(
+            route = airportRoute(origin),
+            currentPosition = origin,
+            headingDeg = 70f,
+            distanceFromStartMeters = 0.0,
+            currentSpeedKph = 55f,
+            options = RealWorldOptions(),
+            environment = clearEvening().copy(
+                stormDistanceMeters = 5_200.0,
+                stormEtaMinutes = 12,
+                emergencyZoneDistanceMeters = 1_900.0,
+                hazardSceneDistanceMeters = 2_300.0,
+                roadSurface = "wet cobblestone",
+                roadSurfaceDistanceMeters = 900.0,
+                destinationDistanceMeters = 700.0,
+            ),
+            maxCues = RealWorldCueType.entries.size,
+        )
+
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.STORM_CELL })
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.EMERGENCY_VEHICLE })
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.HAZARD_SCENE })
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.ROAD_SURFACE })
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.DESTINATION_ARRIVAL })
+    }
+
+    @Test
+    fun moonNightSkyOnlyAppearsForClearRuralNight() {
+        val origin = LatLng(48.3538, 11.7861)
+        val frame = engine.frameAhead(
+            route = airportRoute(origin),
+            currentPosition = origin,
+            headingDeg = 70f,
+            distanceFromStartMeters = 0.0,
+            currentSpeedKph = 70f,
+            options = RealWorldOptions(),
+            environment = clearEvening().copy(
+                now = LocalDateTime.of(2026, 8, 21, 22, 30),
+                cloudCoverPercent = 12,
+                moonVisible = true,
+            ),
+            maxCues = RealWorldCueType.entries.size,
+        )
+
+        assertEquals(RealWorldSky.NIGHT, frame.atmosphere.sky)
+        assertTrue(frame.cues.any { it.type == RealWorldCueType.MOON_NIGHT_SKY })
+    }
+
+    @Test
+    fun routePulsePrioritizesEmergencyGpsWeatherThenTraffic() {
+        val origin = LatLng(48.3538, 11.7861)
+        val route = airportRoute(origin)
+
+        val emergency = engine.frameAhead(
+            route = route,
+            currentPosition = origin,
+            headingDeg = 70f,
+            distanceFromStartMeters = 0.0,
+            currentSpeedKph = 70f,
+            options = RealWorldOptions(),
+            environment = clearEvening().copy(
+                emergencyZoneDistanceMeters = 2_000.0,
+                lowGpsConfidence = true,
+                precipitationMm = 1.0,
+                trafficDelaySeconds = 700L,
+            ),
+        )
+        val gps = engine.frameAhead(
+            route = route,
+            currentPosition = origin,
+            headingDeg = 70f,
+            distanceFromStartMeters = 0.0,
+            currentSpeedKph = 70f,
+            options = RealWorldOptions(),
+            environment = clearEvening().copy(lowGpsConfidence = true, precipitationMm = 1.0),
+        )
+        val weather = engine.frameAhead(
+            route = route,
+            currentPosition = origin,
+            headingDeg = 70f,
+            distanceFromStartMeters = 0.0,
+            currentSpeedKph = 70f,
+            options = RealWorldOptions(),
+            environment = clearEvening().copy(precipitationMm = 1.0, trafficDelaySeconds = 700L),
+        )
+        val traffic = engine.frameAhead(
+            route = route,
+            currentPosition = origin,
+            headingDeg = 70f,
+            distanceFromStartMeters = 0.0,
+            currentSpeedKph = 70f,
+            options = RealWorldOptions(),
+            environment = clearEvening().copy(trafficDelaySeconds = 700L),
+        )
+
+        assertEquals(RealWorldRoutePulse.EMERGENCY_AHEAD, emergency.atmosphere.routePulse)
+        assertEquals(RealWorldRoutePulse.LOW_GPS_CONFIDENCE, gps.atmosphere.routePulse)
+        assertEquals(RealWorldRoutePulse.RAIN_OR_ICE, weather.atmosphere.routePulse)
+        assertEquals(RealWorldRoutePulse.HEAVY_CONGESTION, traffic.atmosphere.routePulse)
     }
 
     @Test
