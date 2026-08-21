@@ -25,6 +25,7 @@ import com.navplus.core.navigation.RealWorldOptions
 import com.navplus.core.navigation.RoadCharacter
 import com.navplus.core.navigation.RoadCharacterAnalyzer
 import com.navplus.core.navigation.RoadScenarioSimulator
+import com.navplus.core.navigation.TripInsightsRepository
 import com.navplus.core.navigation.TripRepository
 import com.navplus.core.regions.BorderCrossing
 import com.navplus.core.regions.BorderCrossingDetector
@@ -97,6 +98,7 @@ class NavigationViewModel @Inject constructor(
     private val safetyEngine: SafetyEngine,
     private val routingEngine: RoutingEngine,
     private val tripRepository: TripRepository,
+    private val tripInsightsRepository: TripInsightsRepository,
     private val lookaheadEngine: LookaheadEngine,
     private val roadCharacterAnalyzer: RoadCharacterAnalyzer,
     private val borderCrossingDetector: BorderCrossingDetector,
@@ -601,6 +603,12 @@ class NavigationViewModel @Inject constructor(
     }
 
     fun stopNavigation() {
+        val activeRoute = (navState.value as? NavigationState.Navigating)?.progress?.route
+        if (activeRoute != null && settings.value.tripHistoryEnabled) {
+            viewModelScope.launch {
+                tripInsightsRepository.saveCompletedRoute(activeRoute, activeRoute.tripInsightTitle())
+            }
+        }
         navigationEngine.stopNavigation()
         safetyEngine.clearRoute()
         if (roadScenarioSimulator.isActive) {
@@ -609,6 +617,10 @@ class NavigationViewModel @Inject constructor(
         _routingUiState.value = RoutingUiState.Idle
     }
 }
+
+private fun Route.tripInsightTitle(): String =
+    waypoints.lastOrNull()?.let { "Trip to ${"%.3f".format(it.lat)}, ${"%.3f".format(it.lng)}" }
+        ?: "Completed trip"
 
 private fun UserSettings.toRealWorldOptions(): RealWorldOptions = RealWorldOptions(
     enabled = realWorldFeelEnabled,

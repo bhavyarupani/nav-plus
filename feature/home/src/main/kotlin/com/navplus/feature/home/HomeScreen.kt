@@ -65,6 +65,7 @@ fun HomeScreen(
     onSetHome: () -> Unit = {},
     onSetWork: () -> Unit = {},
     onSettingsTap: () -> Unit = {},
+    onTripsTap: () -> Unit = {},
     vm: HomeViewModel = hiltViewModel(),
 ) {
     val connectivity by vm.connectivityState.collectAsStateWithLifecycle()
@@ -134,6 +135,13 @@ fun HomeScreen(
                         if (workPlace != null) onNavigateTo(LatLng(workPlace.lat, workPlace.lng), workPlace.label)
                         else onSetWork()
                     },
+                    modifier = Modifier.weight(1f),
+                )
+                ShortcutPill(
+                    emoji = "92",
+                    label = "Trips",
+                    isSet = true,
+                    onClick = onTripsTap,
                     modifier = Modifier.weight(1f),
                 )
             }
