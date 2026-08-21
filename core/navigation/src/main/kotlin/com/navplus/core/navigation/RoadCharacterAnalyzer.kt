@@ -27,7 +27,7 @@ class RoadCharacterAnalyzer @Inject constructor() {
                 currentType = type
             }
             segmentSteps.add(step)
-            if (segments.size >= 3) break // show next 3 road personalities
+            if (segments.size >= 5) break
         }
         if (segmentSteps.isNotEmpty()) {
             segments.add(buildCharacter(segmentSteps, currentType))
@@ -68,13 +68,21 @@ class RoadCharacterAnalyzer @Inject constructor() {
 
     private fun classifyStep(step: RouteStep): RoadType {
         val name = (step.streetName ?: "").uppercase()
+        val text = "${step.streetName.orEmpty()} ${step.instruction}".uppercase()
+        val limit = step.speedLimitKph
         return when {
+            text.contains("SCHOOL") || text.contains("SCHULE") || text.contains("KINDERGARTEN") -> RoadType.SCHOOL_ZONE
+            text.contains("TRAFFIC CALMING") || text.contains("VERKEHRSBERUHIGT") -> RoadType.TRAFFIC_CALMING
+            text.contains("LÄRMSCHUTZ") || text.contains("LAERMSCHUTZ") || text.contains("NOISE PROTECTION") -> RoadType.NOISE_PROTECTION
+            limit != null && limit <= 30 -> RoadType.RESIDENTIAL
+            step.maneuver == Maneuver.TUNNEL || text.contains("TUNNEL") -> RoadType.TUNNEL
             // Motorway: Autobahn A1, A8; French autoroute A7; UK M1
             name.matches(Regex("[AM]\\d+.*")) || name.contains("AUTOBAHN") || name.contains("MOTORWAY") -> RoadType.MOTORWAY
             // National roads B, RN, N
             name.matches(Regex("[BN]\\d+.*")) || name.contains("NATIONAL") -> RoadType.DUAL_CARRIAGEWAY
             // Ferry
-            name.contains("FERRY") || name.contains("FÄHRE") -> RoadType.FERRY
+            step.maneuver == Maneuver.FERRY || name.contains("FERRY") || name.contains("FÄHRE") -> RoadType.FERRY
+            text.contains("RESIDENTIAL") || text.contains("WOHNGEBIET") || text.contains("WOHNSTRASSE") || text.contains("WOHNSTRAẞE") -> RoadType.RESIDENTIAL
             // Mountain heuristic: lots of sharp turns
             step.maneuver == Maneuver.TURN_SHARP_LEFT || step.maneuver == Maneuver.TURN_SHARP_RIGHT -> RoadType.MOUNTAIN
             // Urban
@@ -90,6 +98,11 @@ class RoadCharacterAnalyzer @Inject constructor() {
         RoadType.MOUNTAIN         -> "Mountain road"
         RoadType.RURAL            -> "Country road"
         RoadType.URBAN            -> "Town"
+        RoadType.RESIDENTIAL      -> "Residential / 30 zone"
+        RoadType.TRAFFIC_CALMING  -> "Traffic calming"
+        RoadType.SCHOOL_ZONE      -> "School area"
+        RoadType.NOISE_PROTECTION -> "Noise protection"
+        RoadType.TUNNEL           -> "Tunnel"
         RoadType.FERRY            -> "Ferry crossing"
     }
 

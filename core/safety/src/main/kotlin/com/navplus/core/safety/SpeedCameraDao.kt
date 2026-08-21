@@ -3,6 +3,7 @@ package com.navplus.core.safety
 import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Upsert
+import com.navplus.core.safety.model.SpeedCameraFetchTile
 import com.navplus.core.safety.model.SpeedCamera
 
 @Dao
@@ -25,4 +26,16 @@ interface SpeedCameraDao {
 
     @Query("SELECT COUNT(*) FROM speed_cameras")
     suspend fun count(): Int
+
+    @Query("SELECT COUNT(*) FROM speed_cameras WHERE source = :source")
+    suspend fun countBySource(source: String): Int
+
+    @Query("DELETE FROM speed_cameras WHERE source = :source")
+    suspend fun deleteBySource(source: String)
+
+    @Query("SELECT * FROM speed_camera_fetch_tiles WHERE tileKey = :tileKey")
+    suspend fun getFetchTile(tileKey: String): SpeedCameraFetchTile?
+
+    @Upsert
+    suspend fun upsertFetchTile(tile: SpeedCameraFetchTile)
 }

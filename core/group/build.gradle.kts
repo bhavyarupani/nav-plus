@@ -28,4 +28,6 @@ dependencies {
     implementation(project(":core:common"))
     implementation(project(":core:routing"))
     implementation(project(":core:connectivity"))
+
+    testImplementation(libs.junit)
 }

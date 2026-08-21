@@ -3,6 +3,7 @@ package com.navplus.core.routing.tomtom
 import com.navplus.core.common.model.LatLng
 import com.navplus.core.common.model.Maneuver
 import com.navplus.core.common.model.Route
+import com.navplus.core.common.model.RouteStyle
 import com.navplus.core.common.model.RouteStep
 import com.navplus.core.routing.RoutingEngine
 import com.navplus.core.routing.RoutingRequest
@@ -13,6 +14,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Named
 import javax.inject.Singleton
@@ -24,6 +26,11 @@ class TomTomRoutingEngine @Inject constructor(
 ) : RoutingEngine {
 
     @Volatile private var quotaResetAt = 0L
+    private val routingClient: OkHttpClient = client.newBuilder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS)
+        .build()
 
     override fun coversLocation(lat: Double, lng: Double): Boolean =
         apiKey.isNotEmpty() && System.currentTimeMillis() >= quotaResetAt
@@ -33,13 +40,14 @@ class TomTomRoutingEngine @Inject constructor(
             try {
                 val waypoints = buildWaypoints(request)
                 val url = "https://api.tomtom.com/routing/1/calculateRoute/$waypoints/json" +
-                    "?key=$apiKey&traffic=true&travelMode=car&routeType=fastest" +
+                    "?key=$apiKey&traffic=true&travelMode=car&routeType=${request.style.tomTomRouteType()}" +
+                    "&instructionsType=text&language=en-US" +
                     "&maxAlternatives=${(request.alternatives - 1).coerceAtLeast(0)}" +
                     (if (request.avoidTolls) "&avoid=tollRoads" else "") +
                     (if (request.avoidHighways) "&avoid=motorways" else "") +
                     (if (request.avoidFerries) "&avoid=ferries" else "")
 
-                val response = client.newCall(Request.Builder().url(url).build()).execute()
+                val response = routingClient.newCall(Request.Builder().url(url).build()).execute()
                 if (response.code == 429) {
                     quotaResetAt = System.currentTimeMillis() + 60 * 60 * 1000L
                     return@withContext RoutingResult.Error(Exception("TomTom quota exceeded"))
@@ -119,9 +127,16 @@ class TomTomRoutingEngine @Inject constructor(
                     steps = steps,
                     distanceMeters = summary.getDouble("lengthInMeters"),
                     durationSeconds = summary.getLong("travelTimeInSeconds"),
+                    trafficDelaySeconds = summary.optLong("trafficDelayInSeconds", 0L),
+                    style = req.style,
                 )
             } catch (e: Exception) { null }
         }
+    }
+
+    private fun RouteStyle.tomTomRouteType(): String = when (this) {
+        RouteStyle.SCENIC -> "thrilling"
+        else -> "fastest"
     }
 
     private fun String.toManeuver(): Maneuver = when (this) {

@@ -18,6 +18,8 @@ import com.navplus.core.group.model.VoteProposalPayload
 import com.navplus.core.group.model.WsEnvelope
 import com.navplus.core.common.model.LatLng
 import com.navplus.core.common.model.Route
+import com.navplus.core.common.model.bearingTo
+import com.navplus.core.common.model.distanceTo
 import com.squareup.moshi.Moshi
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -36,6 +38,8 @@ import okhttp3.WebSocketListener
 import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlin.math.cos
+import kotlin.math.roundToLong
 
 @Singleton
 class GroupSyncService @Inject constructor(
@@ -48,11 +52,16 @@ class GroupSyncService @Inject constructor(
     val session: StateFlow<GroupSession?> = _session.asStateFlow()
 
     private var webSocket: WebSocket? = null
+    private var debugConvoyRoute: Route? = null
     private val envelopeAdapter = moshi.adapter(WsEnvelope::class.java)
 
     companion object {
         private const val RELAY_BASE = "wss://97ef9e515cb340.lhr.life/rooms"
         private const val LOCATION_INTERVAL_MS = 4_000L
+        private const val DEBUG_ROOM_CODE = "SIM-3"
+        private const val DEBUG_SELF_ID = "debug-driver"
+        private const val DEBUG_TRAIL_ID = "debug-trail"
+        private const val DEBUG_SWEEP_ID = "debug-sweep"
     }
 
     fun createSession(selfName: String, selfColor: String): String {
@@ -68,6 +77,7 @@ class GroupSyncService @Inject constructor(
     }
 
     private fun connect(code: String, selfId: String, name: String, color: String, isLeader: Boolean) {
+        debugConvoyRoute = null
         _session.value = GroupSession(
             code = code,
             selfId = selfId,
@@ -143,7 +153,7 @@ class GroupSyncService @Inject constructor(
             }
             MsgType.ROUTE -> {
                 val p = moshi.adapter(RoutePayload::class.java).fromJson(envelope.payload) ?: return
-                // Route sync from leader — currently stored in session for follower use
+                _session.update { s -> s?.copy(leaderRoute = p.toRoute()) }
             }
             MsgType.VOTE_PROPOSAL -> {
                 val p = moshi.adapter(VoteProposalPayload::class.java).fromJson(envelope.payload) ?: return
@@ -185,13 +195,61 @@ class GroupSyncService @Inject constructor(
         etaSec: Long?, distanceRemainingMeters: Double?, hasDeviated: Boolean,
     ) {
         val selfId = _session.value?.selfId ?: return
+        val now = System.currentTimeMillis()
+        _session.update { s ->
+            s?.copy(members = s.members.mapValues { (id, member) ->
+                if (id == selfId) member.copy(
+                    location = LatLng(lat, lng),
+                    bearingDeg = bearing,
+                    speedKph = speedKph,
+                    etaSec = etaSec,
+                    distanceRemainingMeters = distanceRemainingMeters,
+                    hasDeviated = hasDeviated,
+                    rejoinInfo = if (hasDeviated) member.rejoinInfo else null,
+                    lastSeenMs = now,
+                    isOnline = true,
+                ) else member
+            })
+        }
+        debugConvoyRoute?.let { route ->
+            updateDebugPeers(route, distanceRemainingMeters ?: route.distanceMeters, speedKph, now)
+        }
         send(MsgType.LOCATION, moshi.adapter(LocationPayload::class.java).toJson(
             LocationPayload(selfId, lat, lng, bearing, speedKph, etaSec, distanceRemainingMeters, hasDeviated)
         ))
     }
 
+    fun broadcastRoute(route: Route) {
+        _session.update { s -> s?.copy(leaderRoute = route) }
+        val payload = RoutePayload(
+            waypoints = route.waypoints.map { LatLngJson(it.lat, it.lng) },
+            geometry = route.geometry.map { LatLngJson(it.lat, it.lng) },
+        )
+        send(MsgType.ROUTE, moshi.adapter(RoutePayload::class.java).toJson(payload))
+    }
+
+    fun startDebugConvoy(route: Route) {
+        webSocket?.close(1000, "debug convoy")
+        webSocket = null
+        debugConvoyRoute = route
+        val now = System.currentTimeMillis()
+        _session.value = GroupSession(
+            code = DEBUG_ROOM_CODE,
+            selfId = DEBUG_SELF_ID,
+            leaderRoute = route,
+            connectionState = ConnectionState.CONNECTED,
+            members = debugMembers(route, distanceRemainingMeters = route.distanceMeters, selfSpeedKph = 45f, nowMs = now),
+        )
+    }
+
     fun proposeStop(options: List<StopOptionType>) {
         val proposalId = UUID.randomUUID().toString()
+        val stopOptions = options.mapNotNull { type ->
+            STOP_OPTIONS.find { it.type == type }
+        }
+        _session.update { s ->
+            s?.copy(activeProposal = StopProposal(proposalId, stopOptions, isOpen = true))
+        }
         send(MsgType.VOTE_PROPOSAL, moshi.adapter(VoteProposalPayload::class.java).toJson(
             VoteProposalPayload(proposalId, options.map { it.name })
         ))
@@ -199,12 +257,20 @@ class GroupSyncService @Inject constructor(
 
     fun castVote(proposalId: String, choice: StopOptionType) {
         val selfId = _session.value?.selfId ?: return
+        _session.update { s ->
+            val proposal = s?.activeProposal ?: return@update s
+            if (proposal.id != proposalId) return@update s
+            s.copy(activeProposal = proposal.copy(votes = proposal.votes + (selfId to choice)))
+        }
         send(MsgType.VOTE_CAST, moshi.adapter(VoteCastPayload::class.java).toJson(
             VoteCastPayload(proposalId, selfId, choice.name)
         ))
     }
 
-    fun closeVoting() = send(MsgType.VOTE_RESULT, "\"closed\"")
+    fun closeVoting() {
+        _session.update { s -> s?.copy(activeProposal = s.activeProposal?.copy(isOpen = false)) }
+        send(MsgType.VOTE_RESULT, "\"closed\"")
+    }
 
     fun broadcastRejoin(memberId: String, distanceMeters: Double, etaSec: Long, locationName: String?) {
         send(MsgType.REJOIN, moshi.adapter(RejoinPayload::class.java).toJson(
@@ -215,12 +281,102 @@ class GroupSyncService @Inject constructor(
     fun disconnect() {
         webSocket?.close(1000, "user left")
         webSocket = null
+        debugConvoyRoute = null
         _session.value = null
     }
 
     private fun send(type: String, payload: String) {
         val json = envelopeAdapter.toJson(WsEnvelope(type, payload))
         webSocket?.send(json)
+    }
+
+    private fun updateDebugPeers(
+        route: Route,
+        distanceRemainingMeters: Double,
+        selfSpeedKph: Float,
+        nowMs: Long,
+    ) {
+        val debugMembers = debugMembers(route, distanceRemainingMeters, selfSpeedKph, nowMs)
+        _session.update { s ->
+            if (s?.code != DEBUG_ROOM_CODE) return@update s
+            s.copy(members = s.members + debugMembers.filterKeys { it != s.selfId })
+        }
+    }
+
+    private fun debugMembers(
+        route: Route,
+        distanceRemainingMeters: Double,
+        selfSpeedKph: Float,
+        nowMs: Long,
+    ): Map<String, GroupMember> {
+        val total = route.distanceMeters.coerceAtLeast(1.0)
+        val selfDistanceFromStart = (total - distanceRemainingMeters).coerceIn(0.0, total)
+        val selfFix = route.pointAtDistance(selfDistanceFromStart)
+        val trailDistanceFromStart = (selfDistanceFromStart - 260.0).coerceAtLeast(0.0)
+        val trailFix = route.pointAtDistance(trailDistanceFromStart)
+
+        val sweepDeviated = selfDistanceFromStart in (total * 0.38)..(total * 0.78)
+        val sweepRouteDistance = (selfDistanceFromStart - 520.0).coerceIn(0.0, total)
+        val sweepFix = route.pointAtDistance(sweepRouteDistance)
+        val sweepLocation = if (sweepDeviated) {
+            sweepFix.point.offsetMeters(north = -55.0, east = 190.0)
+        } else {
+            sweepFix.point
+        }
+        val sweepRejoin = if (sweepDeviated) {
+            RejoinInfo(
+                distanceMeters = 430.0,
+                etaSec = 55L,
+                locationName = "next safe rejoin",
+            )
+        } else null
+
+        return mapOf(
+            DEBUG_SELF_ID to GroupMember(
+                id = DEBUG_SELF_ID,
+                name = "You",
+                color = "#38BDF8",
+                isLeader = true,
+                location = selfFix.point,
+                bearingDeg = selfFix.bearingDeg,
+                speedKph = selfSpeedKph,
+                etaSec = etaFrom(distanceRemainingMeters, selfSpeedKph),
+                distanceRemainingMeters = distanceRemainingMeters,
+                lastSeenMs = nowMs,
+                isOnline = true,
+            ),
+            DEBUG_TRAIL_ID to GroupMember(
+                id = DEBUG_TRAIL_ID,
+                name = "Mia",
+                color = "#22C55E",
+                location = trailFix.point,
+                bearingDeg = trailFix.bearingDeg,
+                speedKph = (selfSpeedKph - 6f).coerceAtLeast(22f),
+                etaSec = etaFrom((total - trailDistanceFromStart).coerceAtLeast(0.0), (selfSpeedKph - 6f).coerceAtLeast(22f)),
+                distanceRemainingMeters = (total - trailDistanceFromStart).coerceAtLeast(0.0),
+                lastSeenMs = nowMs,
+                isOnline = true,
+            ),
+            DEBUG_SWEEP_ID to GroupMember(
+                id = DEBUG_SWEEP_ID,
+                name = "Arun",
+                color = "#F97316",
+                location = sweepLocation,
+                bearingDeg = sweepFix.bearingDeg,
+                speedKph = if (sweepDeviated) 28f else (selfSpeedKph - 10f).coerceAtLeast(20f),
+                etaSec = etaFrom((total - sweepRouteDistance + if (sweepDeviated) 430.0 else 0.0).coerceAtLeast(0.0), if (sweepDeviated) 28f else (selfSpeedKph - 10f).coerceAtLeast(20f)),
+                distanceRemainingMeters = (total - sweepRouteDistance + if (sweepDeviated) 430.0 else 0.0).coerceAtLeast(0.0),
+                lastSeenMs = nowMs,
+                isOnline = true,
+                hasDeviated = sweepDeviated,
+                rejoinInfo = sweepRejoin,
+            ),
+        )
+    }
+
+    private fun etaFrom(distanceMeters: Double, speedKph: Float): Long {
+        val speedMps = (speedKph / 3.6f).takeIf { it > 1f } ?: 12.5f
+        return (distanceMeters / speedMps).roundToLong()
     }
 
     private val STOP_OPTIONS = listOf(
@@ -230,5 +386,59 @@ class GroupSyncService @Inject constructor(
         StopOption(StopOptionType.VIEWPOINT,   "Viewpoint",   "🏞"),
         StopOption(StopOptionType.REST,        "Rest area",   "🚻"),
         StopOption(StopOptionType.COFFEE,      "Coffee",      "☕"),
+    )
+}
+
+private data class RouteFix(val point: LatLng, val bearingDeg: Float)
+
+private fun RoutePayload.toRoute(): Route {
+    val routeGeometry = geometry.map { LatLng(it.lat, it.lng) }
+    val routeWaypoints = waypoints.map { LatLng(it.lat, it.lng) }
+    val distance = routeGeometry.zipWithNext().sumOf { (a, b) -> a.distanceTo(b) }
+    return Route(
+        id = "synced-${System.currentTimeMillis()}",
+        waypoints = routeWaypoints.ifEmpty {
+            listOfNotNull(routeGeometry.firstOrNull(), routeGeometry.lastOrNull())
+        },
+        geometry = routeGeometry,
+        steps = emptyList(),
+        distanceMeters = distance,
+        durationSeconds = (distance / 13.9).roundToLong(),
+    )
+}
+
+private fun Route.pointAtDistance(distanceMeters: Double): RouteFix {
+    if (geometry.size < 2) return RouteFix(geometry.firstOrNull() ?: LatLng.ZERO, 0f)
+    var remaining = distanceMeters.coerceAtLeast(0.0)
+    for (index in 0 until geometry.lastIndex) {
+        val start = geometry[index]
+        val end = geometry[index + 1]
+        val segmentDistance = start.distanceTo(end)
+        if (segmentDistance <= 0.0) continue
+        if (remaining <= segmentDistance) {
+            val fraction = remaining / segmentDistance
+            return RouteFix(
+                point = start.interpolate(end, fraction),
+                bearingDeg = start.bearingTo(end).toFloat(),
+            )
+        }
+        remaining -= segmentDistance
+    }
+    val lastSegmentStart = geometry[geometry.lastIndex - 1]
+    val last = geometry.last()
+    return RouteFix(last, lastSegmentStart.bearingTo(last).toFloat())
+}
+
+private fun LatLng.interpolate(end: LatLng, fraction: Double): LatLng = LatLng(
+    lat = lat + (end.lat - lat) * fraction.coerceIn(0.0, 1.0),
+    lng = lng + (end.lng - lng) * fraction.coerceIn(0.0, 1.0),
+)
+
+private fun LatLng.offsetMeters(north: Double, east: Double): LatLng {
+    val latMeters = 111_320.0
+    val lngMeters = latMeters * cos(Math.toRadians(lat))
+    return LatLng(
+        lat = lat + north / latMeters,
+        lng = lng + east / lngMeters,
     )
 }

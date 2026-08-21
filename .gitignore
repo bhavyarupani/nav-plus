@@ -13,3 +13,5 @@ local.properties
 tools/planetiler/
 tools/data/
 
+.kotlin/
+server/node_modules/

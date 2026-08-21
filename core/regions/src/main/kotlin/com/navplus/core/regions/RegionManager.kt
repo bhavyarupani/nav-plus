@@ -54,5 +54,14 @@ class RegionManager @Inject constructor(
 
     suspend fun seedDefaultRegions(regions: List<Region>) {
         dao.insertAll(regions)
+        regions.forEach { catalogueRegion ->
+            val existing = dao.getById(catalogueRegion.id) ?: return@forEach
+            dao.update(
+                catalogueRegion.copy(
+                    status = existing.status,
+                    downloadedAt = existing.downloadedAt,
+                )
+            )
+        }
     }
 }

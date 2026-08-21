@@ -4,6 +4,7 @@ data class Location(
     val latLng: LatLng,
     val bearingDeg: Float = 0f,
     val speedMps: Float = 0f,
+    val speedAccuracyMps: Float? = null,
     val accuracyMeters: Float = 0f,
     val altitudeMeters: Double = 0.0,
     val timestampMs: Long = System.currentTimeMillis(),

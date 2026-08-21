@@ -134,6 +134,13 @@ private fun TimelineEventChip(event: LookaheadEvent) {
                     color = Color(0xFFB0B8CC),
                     style = MaterialTheme.typography.labelSmall,
                 )
+                event.subtitle?.let { subtitle ->
+                    Text(
+                        subtitle,
+                        color = Color(0xFF94A3B8),
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                }
             }
         }
     }

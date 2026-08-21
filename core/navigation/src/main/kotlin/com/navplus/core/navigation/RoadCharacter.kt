@@ -18,6 +18,11 @@ enum class RoadType {
     MOUNTAIN,
     RURAL,
     URBAN,
+    RESIDENTIAL,
+    TRAFFIC_CALMING,
+    SCHOOL_ZONE,
+    NOISE_PROTECTION,
+    TUNNEL,
     FERRY,
 }
 
@@ -28,5 +33,10 @@ fun RoadType.emoji(): String = when (this) {
     RoadType.MOUNTAIN          -> "⛰"
     RoadType.RURAL             -> "🌾"
     RoadType.URBAN             -> "🏙"
+    RoadType.RESIDENTIAL       -> "🏘"
+    RoadType.TRAFFIC_CALMING   -> "⚠"
+    RoadType.SCHOOL_ZONE       -> "🏫"
+    RoadType.NOISE_PROTECTION  -> "🔇"
+    RoadType.TUNNEL            -> "🚇"
     RoadType.FERRY             -> "⛴"
 }

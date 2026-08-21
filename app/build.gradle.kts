@@ -72,6 +72,8 @@ dependencies {
     implementation(libs.core.ktx)
     implementation(libs.coroutines.android)
     implementation(libs.okhttp)
+    implementation(libs.car.app)
+    implementation(libs.car.app.projected)
 
     implementation(project(":core:common"))
     implementation(project(":core:connectivity"))
@@ -86,7 +88,10 @@ dependencies {
     implementation(project(":feature:navigation"))
     implementation(project(":feature:search"))
     implementation(project(":feature:group"))
+    implementation(project(":core:settings"))
+    implementation(project(":feature:settings"))
     implementation(project(":feature:regions"))
 
     debugImplementation(libs.compose.ui.tooling)
+    testImplementation(libs.car.app.testing)
 }

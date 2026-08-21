@@ -29,10 +29,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.navplus.app.navigation.AppNavHost
 import com.navplus.app.ui.theme.NavPlusTheme
+import com.navplus.core.navigation.RoadScenarioSimulator
 import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    @Inject lateinit var roadScenarioSimulator: RoadScenarioSimulator
 
     private var locationGranted by mutableStateOf(false)
 
@@ -46,6 +50,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        val startRoadSimulation = intent?.action == ACTION_SIMULATE_DRIVE
+        if (startRoadSimulation) {
+            roadScenarioSimulator.start()
+        }
 
         // Check if permission is already held
         locationGranted = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) ==
@@ -65,7 +73,7 @@ class MainActivity : ComponentActivity() {
         setContent {
             NavPlusTheme {
                 if (locationGranted) {
-                    AppNavHost()
+                    AppNavHost(startRoadSimulation = startRoadSimulation)
                 } else {
                     LocationPermissionRationale(
                         onGrant = {
@@ -80,6 +88,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    companion object {
+        const val ACTION_SIMULATE_DRIVE = "com.navplus.action.SIMULATE_DRIVE"
     }
 
     @androidx.compose.runtime.Composable

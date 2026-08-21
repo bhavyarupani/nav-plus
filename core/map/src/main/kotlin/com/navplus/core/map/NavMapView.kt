@@ -1,6 +1,9 @@
 package com.navplus.core.map
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.pm.PackageManager
 import android.util.Log
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -20,6 +23,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.navplus.core.common.model.LatLng
@@ -41,16 +45,29 @@ import org.maplibre.android.style.layers.CircleLayer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
+import org.maplibre.android.style.layers.RasterLayer
 import org.maplibre.android.style.layers.SymbolLayer
 import org.maplibre.android.style.sources.GeoJsonSource
+import org.maplibre.android.style.sources.RasterSource
+import org.maplibre.android.style.sources.TileSet
 import org.maplibre.geojson.Feature
 import org.maplibre.geojson.Point
 
 private const val ROUTE_SOURCE_ID       = "navplus-route"
 private const val ROUTE_CASING_ID       = "navplus-route-casing"
 private const val ROUTE_LINE_ID         = "navplus-route-line"
+private const val ROUTE_ALTS_SOURCE_ID  = "navplus-route-alternatives"
+private const val ROUTE_ALT_CASING_ID   = "navplus-route-alt-casing"
+private const val ROUTE_ALT_LINE_ID     = "navplus-route-alt-line"
+private const val ROUTE_SELECTED_CASING_ID = "navplus-route-selected-casing"
+private const val ROUTE_SELECTED_LINE_ID = "navplus-route-selected-line"
+private const val TRAFFIC_SOURCE_ID     = "navplus-traffic-flow"
+private const val TRAFFIC_LAYER_ID      = "navplus-traffic-flow-layer"
 private const val CAMERA_SOURCE_ID      = "navplus-cameras"
 private const val CAMERA_CIRCLE_ID      = "navplus-cameras-circle"
+private const val CAMERA_REDLIGHT_TOP_ID = "navplus-cameras-redlight-top"
+private const val CAMERA_REDLIGHT_MID_ID = "navplus-cameras-redlight-mid"
+private const val CAMERA_REDLIGHT_BOTTOM_ID = "navplus-cameras-redlight-bottom"
 private const val CAMERA_TEXT_ID        = "navplus-cameras-text"
 private const val VEHICLE_SOURCE_ID     = "navplus-user-vehicle"
 private const val VEHICLE_LAYER_ID      = "navplus-user-vehicle-layer"
@@ -63,6 +80,7 @@ private const val GLIDE_MIN_NANOS     =   200_000_000L
 private const val GLIDE_MAX_NANOS     = 2_000_000_000L
 private const val GLIDE_SNAP_METERS   = 150.0           // beyond this, cut instead of glide
 
+@SuppressLint("MissingPermission")
 @Composable
 fun NavMapView(
     modifier: Modifier = Modifier,
@@ -73,9 +91,15 @@ fun NavMapView(
     tilt: Double = 0.0,
     showLocationIndicator: Boolean = true,
     trackCamera: Boolean = false,
+    recenterTrigger: Int = 0,
     routeGeometry: List<LatLng>? = null,
+    routeAlternatives: List<MapRouteLine> = emptyList(),
+    selectedRouteId: String? = null,
     cameras: List<CameraMarker> = emptyList(),
+    trafficFlowTileUrls: List<String> = emptyList(),
     onCameraIdle: ((minLat: Double, maxLat: Double, minLng: Double, maxLng: Double) -> Unit)? = null,
+    onCameraTap: ((CameraMarker) -> Unit)? = null,
+    onRouteTap: ((String) -> Unit)? = null,
     onMapReady: (MapLibreMap) -> Unit = {},
     // Vehicle icon — when provided, shows the user's vehicle instead of the default blue dot.
     vehicleType: VehicleType? = null,
@@ -92,6 +116,9 @@ fun NavMapView(
     var resumeSignal by remember { mutableIntStateOf(0) }
 
     val currentOnCameraIdle = rememberUpdatedState(onCameraIdle)
+    val currentOnCameraTap = rememberUpdatedState(onCameraTap)
+    val currentOnRouteTap = rememberUpdatedState(onRouteTap)
+    val currentCameras = rememberUpdatedState(cameras)
 
     // Read by the glide loop each frame, so a new fix redirects the animation
     // in flight rather than restarting the coroutine.
@@ -128,7 +155,7 @@ fun NavMapView(
         mapView.getMapAsync { map ->
             map.setStyle(styleUrl) { style ->
                 // Show the default blue dot only when no custom vehicle icon is configured.
-                if (showLocationIndicator && vehicleType == null) {
+                if (showLocationIndicator && vehicleType == null && context.hasLocationPermission()) {
                     val lc = map.locationComponent
                     val opts = LocationComponentActivationOptions
                         .builder(context, style)
@@ -149,7 +176,9 @@ fun NavMapView(
 
     // Camera moves — instant (moveCamera) when tracking GPS, animated otherwise.
     // Skipped entirely while the glide loop owns the camera.
-    DisposableEffect(cameraPosition, zoom, bearing, tilt, cameraFollowsGlide) {
+    // recenterTrigger is included so an explicit re-center fires even when cameraPosition
+    // hasn't changed value (e.g. user stationary, pans away, taps My Location).
+    DisposableEffect(cameraPosition, zoom, bearing, tilt, cameraFollowsGlide, recenterTrigger) {
         if (!cameraFollowsGlide) {
             mapView.getMapAsync { map ->
                 val pos = CameraPosition.Builder()
@@ -166,15 +195,65 @@ fun NavMapView(
     }
 
     // Route polyline — redraws when map or geometry changes, and after style reload.
-    LaunchedEffect(mapRef, styleTick, routeGeometry) {
+    LaunchedEffect(mapRef, styleTick, routeGeometry, routeAlternatives, selectedRouteId) {
         val map = mapRef ?: return@LaunchedEffect
-        updateRouteLayer(map, routeGeometry)
+        updateRouteLayer(map, if (routeAlternatives.isEmpty()) routeGeometry else null)
+        updateRouteAlternativesLayer(map, routeAlternatives, selectedRouteId)
+    }
+
+    // Live traffic flow raster tiles. This is separate from the base map style so toggles
+    // can enable/disable it without replacing the whole style or route state.
+    LaunchedEffect(mapRef, styleTick, trafficFlowTileUrls) {
+        val map = mapRef ?: return@LaunchedEffect
+        updateTrafficLayer(map, trafficFlowTileUrls)
     }
 
     // Camera markers — redraws when map, markers, or style tick changes.
     LaunchedEffect(mapRef, styleTick, cameras) {
         val map = mapRef ?: return@LaunchedEffect
         updateCameraLayer(map, cameras)
+    }
+
+    // Optional marker tap handling. Used on the normal map for camera source/debug details;
+    // navigation deliberately does not pass a callback, so active driving stays uncluttered.
+    DisposableEffect(mapRef, density) {
+        val map = mapRef ?: return@DisposableEffect onDispose {}
+        val listener = MapLibreMap.OnMapClickListener { click ->
+            val callback = currentOnCameraTap.value ?: return@OnMapClickListener false
+            val camera = cameraAtClick(
+                map = map,
+                click = click,
+                cameras = currentCameras.value,
+                density = density,
+            ) ?: return@OnMapClickListener false
+            callback(camera)
+            true
+        }
+        map.addOnMapClickListener(listener)
+        onDispose { map.removeOnMapClickListener(listener) }
+    }
+
+    // Route line tap handling for preview mode. The callback is intentionally optional so
+    // active driving can leave route interactions disabled.
+    DisposableEffect(mapRef) {
+        val map = mapRef ?: return@DisposableEffect onDispose {}
+        val listener = MapLibreMap.OnMapClickListener { click ->
+            val callback = currentOnRouteTap.value ?: return@OnMapClickListener false
+            val point = map.projection.toScreenLocation(click)
+            val features = map.queryRenderedFeatures(
+                point,
+                ROUTE_SELECTED_LINE_ID,
+                ROUTE_SELECTED_CASING_ID,
+                ROUTE_ALT_LINE_ID,
+                ROUTE_ALT_CASING_ID,
+            )
+            val routeId = features.firstOrNull()?.getStringProperty("routeId")
+                ?: return@OnMapClickListener false
+            callback(routeId)
+            true
+        }
+        map.addOnMapClickListener(listener)
+        onDispose { map.removeOnMapClickListener(listener) }
     }
 
     // Register camera idle listener once when map is ready; fires current viewport immediately.
@@ -192,7 +271,8 @@ fun NavMapView(
         val map = mapRef ?: return@LaunchedEffect
         if (resumeSignal == 0) return@LaunchedEffect
         updateCameraLayer(map, cameras)
-        updateRouteLayer(map, routeGeometry)
+        updateRouteLayer(map, if (routeAlternatives.isEmpty()) routeGeometry else null)
+        updateRouteAlternativesLayer(map, routeAlternatives, selectedRouteId)
         if (vehicleType != null) registerVehicleIcon(map, context, vehicleType, density)
         fireViewport(map, currentOnCameraIdle.value)
     }
@@ -222,6 +302,10 @@ fun NavMapView(
         )
     }
 }
+
+private fun Context.hasLocationPermission(): Boolean =
+    ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
 /**
  * Moves the vehicle marker smoothly between GPS fixes.
@@ -356,8 +440,112 @@ private fun updateRouteLayer(map: MapLibreMap, geometry: List<LatLng>?) {
     ))
 }
 
+private fun updateRouteAlternativesLayer(
+    map: MapLibreMap,
+    routes: List<MapRouteLine>,
+    selectedRouteId: String?,
+) {
+    val style = map.style ?: return
+    listOf(
+        ROUTE_SELECTED_LINE_ID,
+        ROUTE_SELECTED_CASING_ID,
+        ROUTE_ALT_LINE_ID,
+        ROUTE_ALT_CASING_ID,
+    ).forEach { id ->
+        if (style.getLayer(id) != null) style.removeLayer(id)
+    }
+    if (style.getSource(ROUTE_ALTS_SOURCE_ID) != null) style.removeSource(ROUTE_ALTS_SOURCE_ID)
+    if (routes.isEmpty()) return
+
+    val selectedId = selectedRouteId ?: routes.first().id
+    val features = routes
+        .filter { it.geometry.size >= 2 }
+        .joinToString(",") { route ->
+            val coords = route.geometry.joinToString(",") { "[${it.lng},${it.lat}]" }
+            val selected = if (route.id == selectedId) "true" else "false"
+            """{"type":"Feature","properties":{"routeId":"${route.id}","selected":"$selected"},""" +
+                """"geometry":{"type":"LineString","coordinates":[$coords]}}"""
+        }
+    if (features.isBlank()) return
+
+    val geoJson = """{"type":"FeatureCollection","features":[$features]}"""
+    try {
+        style.addSource(GeoJsonSource(ROUTE_ALTS_SOURCE_ID, geoJson))
+        style.addLayer(LineLayer(ROUTE_ALT_CASING_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
+            Expression.eq(Expression.get("selected"), "false")
+        ).withProperties(
+            PropertyFactory.lineColor("#FFFFFF"),
+            PropertyFactory.lineWidth(8f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(0.45f),
+        ))
+        style.addLayer(LineLayer(ROUTE_ALT_LINE_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
+            Expression.eq(Expression.get("selected"), "false")
+        ).withProperties(
+            PropertyFactory.lineColor("#64748B"),
+            PropertyFactory.lineWidth(5f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(0.72f),
+        ))
+        style.addLayer(LineLayer(ROUTE_SELECTED_CASING_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
+            Expression.eq(Expression.get("selected"), "true")
+        ).withProperties(
+            PropertyFactory.lineColor("#FFFFFF"),
+            PropertyFactory.lineWidth(13f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(0.68f),
+        ))
+        style.addLayer(LineLayer(ROUTE_SELECTED_LINE_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
+            Expression.eq(Expression.get("selected"), "true")
+        ).withProperties(
+            PropertyFactory.lineColor("#2563EB"),
+            PropertyFactory.lineWidth(8.5f),
+            PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
+            PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
+            PropertyFactory.lineOpacity(0.95f),
+        ))
+    } catch (e: Exception) {
+        Log.e("NavMapView", "add route alternatives failed: $e")
+    }
+}
+
+private fun updateTrafficLayer(map: MapLibreMap, tileUrls: List<String>) {
+    val style = map.style ?: return
+    try {
+        if (style.getLayer(TRAFFIC_LAYER_ID) != null) style.removeLayer(TRAFFIC_LAYER_ID)
+        if (style.getSource(TRAFFIC_SOURCE_ID) != null) style.removeSource(TRAFFIC_SOURCE_ID)
+    } catch (e: Exception) {
+        Log.e("NavMapView", "remove traffic layer/source failed: $e")
+        return
+    }
+    if (tileUrls.isEmpty()) return
+
+    try {
+        val tileSet = TileSet("2.2.0", *tileUrls.toTypedArray()).apply {
+            setMinZoom(4f)
+            setMaxZoom(22f)
+            attribution = "Traffic: TomTom"
+        }
+        style.addSource(RasterSource(TRAFFIC_SOURCE_ID, tileSet, 256))
+        val layer = RasterLayer(TRAFFIC_LAYER_ID, TRAFFIC_SOURCE_ID).withProperties(
+            PropertyFactory.rasterOpacity(0.82f),
+            PropertyFactory.rasterFadeDuration(120f),
+        )
+        if (style.getLayer(ROUTE_CASING_ID) != null) {
+            style.addLayerBelow(layer, ROUTE_CASING_ID)
+        } else {
+            style.addLayer(layer)
+        }
+    } catch (e: Exception) {
+        Log.e("NavMapView", "add traffic layer/source failed: $e")
+    }
+}
+
 private fun cameraColor(typeCode: String): String = when (typeCode) {
-    "RED_LIGHT"           -> "#F97316"
+    "RED_LIGHT"           -> "#EF4444"
     "COMBINED"            -> "#8B5CF6"
     "AVERAGE_SPEED_START",
     "AVERAGE_SPEED_END",
@@ -366,11 +554,24 @@ private fun cameraColor(typeCode: String): String = when (typeCode) {
     else                  -> "#EF4444" // FIXED_SPEED default
 }
 
+private fun cameraLabel(camera: CameraMarker): String = when (camera.typeCode) {
+    "RED_LIGHT" -> ""
+    "COMBINED" -> camera.speedLimitKph?.toString() ?: "⋮"
+    "AVERAGE_SPEED_START",
+    "AVERAGE_SPEED_END" -> "↔"
+    "SECTION_CONTROL" -> "↔"
+    "MOBILE_ZONE" -> "!"
+    else -> camera.speedLimitKph?.toString() ?: "•"
+}
+
 private fun updateCameraLayer(map: MapLibreMap, cameras: List<CameraMarker>) {
     Log.d("NavMapView", "updateCameraLayer: ${cameras.size} cameras")
     val style = map.style ?: run { Log.w("NavMapView", "style null, skipping"); return }
     try {
         if (style.getLayer(CAMERA_TEXT_ID) != null) style.removeLayer(CAMERA_TEXT_ID)
+        if (style.getLayer(CAMERA_REDLIGHT_BOTTOM_ID) != null) style.removeLayer(CAMERA_REDLIGHT_BOTTOM_ID)
+        if (style.getLayer(CAMERA_REDLIGHT_MID_ID) != null) style.removeLayer(CAMERA_REDLIGHT_MID_ID)
+        if (style.getLayer(CAMERA_REDLIGHT_TOP_ID) != null) style.removeLayer(CAMERA_REDLIGHT_TOP_ID)
         if (style.getLayer(CAMERA_CIRCLE_ID) != null) style.removeLayer(CAMERA_CIRCLE_ID)
         if (style.getSource(CAMERA_SOURCE_ID) != null) style.removeSource(CAMERA_SOURCE_ID)
     } catch (e: Exception) {
@@ -382,33 +583,77 @@ private fun updateCameraLayer(map: MapLibreMap, cameras: List<CameraMarker>) {
     // Embed color as a hex property in each GeoJSON feature so we can use
     // Expression.toColor(get("color")) — avoids brittle match() expression.
     val features = cameras.joinToString(",") { cam ->
-        val limitText = cam.speedLimitKph?.toString() ?: ""
+        val label = cameraLabel(cam)
         val color = cameraColor(cam.typeCode)
-        """{"type":"Feature","properties":{"limit":"$limitText","color":"$color"},""" +
+        """{"type":"Feature","properties":{"label":"$label","color":"$color","type":"${cam.typeCode}"},""" +
             """"geometry":{"type":"Point","coordinates":[${cam.position.lng},${cam.position.lat}]}}"""
     }
     val geoJson = """{"type":"FeatureCollection","features":[$features]}"""
     try {
         style.addSource(GeoJsonSource(CAMERA_SOURCE_ID, geoJson))
         style.addLayer(CircleLayer(CAMERA_CIRCLE_ID, CAMERA_SOURCE_ID).withProperties(
-            PropertyFactory.circleRadius(20f),
+            PropertyFactory.circleRadius(10f),
             PropertyFactory.circleColor(Expression.toColor(Expression.get("color"))),
-            PropertyFactory.circleStrokeWidth(3f),
+            PropertyFactory.circleStrokeWidth(2f),
             PropertyFactory.circleStrokeColor(AndroidColor.WHITE),
             PropertyFactory.circleOpacity(1.0f),
         ))
+        style.addLayerAbove(redLightDotLayer(CAMERA_REDLIGHT_TOP_ID, "#FEE2E2", -4f), CAMERA_CIRCLE_ID)
+        style.addLayerAbove(redLightDotLayer(CAMERA_REDLIGHT_MID_ID, "#FACC15", 0f), CAMERA_REDLIGHT_TOP_ID)
+        style.addLayerAbove(redLightDotLayer(CAMERA_REDLIGHT_BOTTOM_ID, "#22C55E", 4f), CAMERA_REDLIGHT_MID_ID)
         style.addLayerAbove(SymbolLayer(CAMERA_TEXT_ID, CAMERA_SOURCE_ID).withProperties(
-            PropertyFactory.textField(Expression.get("limit")),
-            PropertyFactory.textSize(12f),
+            PropertyFactory.textField(Expression.get("label")),
+            PropertyFactory.textSize(10f),
             PropertyFactory.textColor(AndroidColor.WHITE),
+            PropertyFactory.textHaloColor(AndroidColor.BLACK),
+            PropertyFactory.textHaloWidth(0.8f),
             PropertyFactory.textFont(arrayOf("Noto Sans Regular")),
             PropertyFactory.textIgnorePlacement(true),
             PropertyFactory.textAllowOverlap(true),
-        ), CAMERA_CIRCLE_ID)
+        ).apply {
+            setMinZoom(12f)
+        }, CAMERA_CIRCLE_ID)
     } catch (e: Exception) {
         Log.e("NavMapView", "addLayer/addSource failed: $e")
     }
 }
+
+private fun cameraAtClick(
+    map: MapLibreMap,
+    click: MapLatLng,
+    cameras: List<CameraMarker>,
+    density: Float,
+): CameraMarker? {
+    if (cameras.isEmpty()) return null
+    val clickPoint = map.projection.toScreenLocation(click)
+    val hitRadiusPx = 34f * density
+    var bestCamera: CameraMarker? = null
+    var bestDistanceSq = hitRadiusPx * hitRadiusPx
+    cameras.forEach { camera ->
+        val point = map.projection.toScreenLocation(MapLatLng(camera.position.lat, camera.position.lng))
+        val dx = point.x - clickPoint.x
+        val dy = point.y - clickPoint.y
+        val distanceSq = dx * dx + dy * dy
+        if (distanceSq <= bestDistanceSq) {
+            bestDistanceSq = distanceSq
+            bestCamera = camera
+        }
+    }
+    return bestCamera
+}
+
+private fun redLightDotLayer(id: String, color: String, translateY: Float): CircleLayer =
+    CircleLayer(id, CAMERA_SOURCE_ID)
+        .withFilter(Expression.eq(Expression.get("type"), "RED_LIGHT"))
+        .withProperties(
+            PropertyFactory.circleRadius(1.7f),
+            PropertyFactory.circleColor(color),
+            PropertyFactory.circleStrokeWidth(0.5f),
+            PropertyFactory.circleStrokeColor(AndroidColor.BLACK),
+            PropertyFactory.circleTranslate(arrayOf(0f, translateY)),
+        ).apply {
+            setMinZoom(12f)
+        }
 
 private fun fireViewport(
     map: MapLibreMap,
