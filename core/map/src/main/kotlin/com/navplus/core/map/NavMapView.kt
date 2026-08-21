@@ -72,6 +72,9 @@ private const val CAMERA_TEXT_ID        = "navplus-cameras-text"
 private const val VEHICLE_SOURCE_ID     = "navplus-user-vehicle"
 private const val VEHICLE_LAYER_ID      = "navplus-user-vehicle-layer"
 private const val VEHICLE_IMAGE_ID      = "navplus-user-vehicle-image"
+private const val CONVOY_SOURCE_ID      = "navplus-convoy-members"
+private const val CONVOY_CIRCLE_ID      = "navplus-convoy-members-circle"
+private const val CONVOY_ARROW_ID       = "navplus-convoy-members-arrow"
 
 // Marker glide. The span is measured from the gap between the last two fixes, so
 // the marker keeps moving for exactly as long as it takes the next one to arrive.
@@ -96,6 +99,7 @@ fun NavMapView(
     routeAlternatives: List<MapRouteLine> = emptyList(),
     selectedRouteId: String? = null,
     cameras: List<CameraMarker> = emptyList(),
+    convoyMembers: List<ConvoyMapMember> = emptyList(),
     trafficFlowTileUrls: List<String> = emptyList(),
     onCameraIdle: ((minLat: Double, maxLat: Double, minLng: Double, maxLng: Double) -> Unit)? = null,
     onCameraTap: ((CameraMarker) -> Unit)? = null,
@@ -214,6 +218,12 @@ fun NavMapView(
         updateCameraLayer(map, cameras)
     }
 
+    // Convoy members — map clips features to the visible viewport naturally.
+    LaunchedEffect(mapRef, styleTick, convoyMembers) {
+        val map = mapRef ?: return@LaunchedEffect
+        updateConvoyLayer(map, convoyMembers)
+    }
+
     // Optional marker tap handling. Used on the normal map for camera source/debug details;
     // navigation deliberately does not pass a callback, so active driving stays uncluttered.
     DisposableEffect(mapRef, density) {
@@ -271,6 +281,7 @@ fun NavMapView(
         val map = mapRef ?: return@LaunchedEffect
         if (resumeSignal == 0) return@LaunchedEffect
         updateCameraLayer(map, cameras)
+        updateConvoyLayer(map, convoyMembers)
         updateRouteLayer(map, if (routeAlternatives.isEmpty()) routeGeometry else null)
         updateRouteAlternativesLayer(map, routeAlternatives, selectedRouteId)
         if (vehicleType != null) registerVehicleIcon(map, context, vehicleType, density)
@@ -617,6 +628,69 @@ private fun updateCameraLayer(map: MapLibreMap, cameras: List<CameraMarker>) {
         Log.e("NavMapView", "addLayer/addSource failed: $e")
     }
 }
+
+private fun updateConvoyLayer(map: MapLibreMap, members: List<ConvoyMapMember>) {
+    val style = map.style ?: return
+    try {
+        if (style.getLayer(CONVOY_ARROW_ID) != null) style.removeLayer(CONVOY_ARROW_ID)
+        if (style.getLayer(CONVOY_CIRCLE_ID) != null) style.removeLayer(CONVOY_CIRCLE_ID)
+        if (style.getSource(CONVOY_SOURCE_ID) != null) style.removeSource(CONVOY_SOURCE_ID)
+    } catch (e: Exception) {
+        Log.e("NavMapView", "remove convoy layer/source failed: $e")
+        return
+    }
+    if (members.isEmpty()) return
+
+    val features = members.joinToString(",") { member ->
+        val color = safeHexColor(member.color)
+        """{"type":"Feature","properties":{"id":"${member.id}","color":"$color","bearing":${member.bearingDeg}},""" +
+            """"geometry":{"type":"Point","coordinates":[${member.position.lng},${member.position.lat}]}}"""
+    }
+    val geoJson = """{"type":"FeatureCollection","features":[$features]}"""
+    try {
+        style.addSource(GeoJsonSource(CONVOY_SOURCE_ID, geoJson))
+        style.addLayer(CircleLayer(CONVOY_CIRCLE_ID, CONVOY_SOURCE_ID).withProperties(
+            PropertyFactory.circleRadius(
+                Expression.interpolate(
+                    Expression.linear(), Expression.zoom(),
+                    Expression.stop(10.0, 7f),
+                    Expression.stop(14.0, 9f),
+                    Expression.stop(16.0, 12f),
+                    Expression.stop(18.0, 14f),
+                )
+            ),
+            PropertyFactory.circleColor(Expression.toColor(Expression.get("color"))),
+            PropertyFactory.circleStrokeColor(AndroidColor.WHITE),
+            PropertyFactory.circleStrokeWidth(2f),
+            PropertyFactory.circleOpacity(0.95f),
+        ))
+        style.addLayerAbove(SymbolLayer(CONVOY_ARROW_ID, CONVOY_SOURCE_ID).withProperties(
+            PropertyFactory.textField("▲"),
+            PropertyFactory.textSize(
+                Expression.interpolate(
+                    Expression.linear(), Expression.zoom(),
+                    Expression.stop(10.0, 12f),
+                    Expression.stop(14.0, 15f),
+                    Expression.stop(16.0, 18f),
+                    Expression.stop(18.0, 20f),
+                )
+            ),
+            PropertyFactory.textColor(AndroidColor.WHITE),
+            PropertyFactory.textHaloColor(AndroidColor.BLACK),
+            PropertyFactory.textHaloWidth(0.8f),
+            PropertyFactory.textRotate(Expression.get("bearing")),
+            PropertyFactory.textRotationAlignment(Property.TEXT_ROTATION_ALIGNMENT_MAP),
+            PropertyFactory.textPitchAlignment(Property.TEXT_PITCH_ALIGNMENT_MAP),
+            PropertyFactory.textAllowOverlap(true),
+            PropertyFactory.textIgnorePlacement(true),
+        ), CONVOY_CIRCLE_ID)
+    } catch (e: Exception) {
+        Log.e("NavMapView", "add convoy layer/source failed: $e")
+    }
+}
+
+private fun safeHexColor(value: String): String =
+    value.takeIf { Regex("^#[0-9A-Fa-f]{6}$").matches(it) } ?: "#22C55E"
 
 private fun cameraAtClick(
     map: MapLibreMap,

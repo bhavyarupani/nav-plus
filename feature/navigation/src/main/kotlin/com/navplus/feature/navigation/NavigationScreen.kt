@@ -83,6 +83,7 @@ import com.navplus.core.common.model.bearingTo
 import com.navplus.core.common.model.distanceTo
 import com.navplus.core.group.model.GroupSession
 import com.navplus.core.map.CameraMarker
+import com.navplus.core.map.ConvoyMapMember
 import com.navplus.core.map.MapRouteLine
 import com.navplus.core.map.MapStyleProvider
 import com.navplus.core.map.NavMapView
@@ -163,6 +164,31 @@ fun NavigationScreen(
     } else {
         emptyList()
     }
+    val convoyMapMembers = if (
+        navigatingState != null &&
+        settings.groupDriveEnabled &&
+        settings.showGroupCarsOnMap
+    ) {
+        groupSession?.members
+            ?.values
+            .orEmpty()
+            .filter { member ->
+                member.id != groupSession?.selfId &&
+                    member.isOnline &&
+                    member.location != null
+            }
+            .map { member ->
+                ConvoyMapMember(
+                    id = member.id,
+                    name = member.name,
+                    position = member.location!!,
+                    bearingDeg = member.bearingDeg,
+                    color = member.color,
+                )
+            }
+    } else {
+        emptyList()
+    }
 
     Box(Modifier.fillMaxSize()) {
         NavMapView(
@@ -177,6 +203,7 @@ fun NavigationScreen(
             routeAlternatives = previewRoutes,
             selectedRouteId = readyState?.selectedRouteId,
             cameras = routeCameraMarkers,
+            convoyMembers = convoyMapMembers,
             trafficFlowTileUrls = trafficFlowTileUrls,
             onRouteTap = if (readyState != null) vm::selectRoute else null,
             vehicleType = settings.vehicleType,
