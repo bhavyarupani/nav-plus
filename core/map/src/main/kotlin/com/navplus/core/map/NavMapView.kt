@@ -42,6 +42,7 @@ import org.maplibre.android.maps.MapView
 import org.maplibre.android.maps.Style
 import org.maplibre.android.style.expressions.Expression
 import org.maplibre.android.style.layers.CircleLayer
+import org.maplibre.android.style.layers.Layer
 import org.maplibre.android.style.layers.LineLayer
 import org.maplibre.android.style.layers.Property
 import org.maplibre.android.style.layers.PropertyFactory
@@ -447,14 +448,14 @@ private fun updateRouteLayer(map: MapLibreMap, geometry: List<LatLng>?, routePul
     val geoJson = """{"type":"FeatureCollection","features":[{"type":"Feature","properties":{},""" +
         """"geometry":{"type":"LineString","coordinates":[$coords]}}]}"""
     style.addSource(GeoJsonSource(ROUTE_SOURCE_ID, geoJson))
-    style.addLayer(LineLayer(ROUTE_CASING_ID, ROUTE_SOURCE_ID).withProperties(
+    style.addLayerBelowVehicle(LineLayer(ROUTE_CASING_ID, ROUTE_SOURCE_ID).withProperties(
         PropertyFactory.lineColor("#FFFFFF"),
         PropertyFactory.lineWidth(12f),
         PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
         PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
         PropertyFactory.lineOpacity(0.6f),
     ))
-    style.addLayer(LineLayer(ROUTE_LINE_ID, ROUTE_SOURCE_ID).withProperties(
+    style.addLayerBelowVehicle(LineLayer(ROUTE_LINE_ID, ROUTE_SOURCE_ID).withProperties(
         PropertyFactory.lineColor(safeHexColor(routePulseColor)),
         PropertyFactory.lineWidth(8f),
         PropertyFactory.lineCap(Property.LINE_CAP_ROUND),
@@ -494,7 +495,7 @@ private fun updateRouteAlternativesLayer(
     val geoJson = """{"type":"FeatureCollection","features":[$features]}"""
     try {
         style.addSource(GeoJsonSource(ROUTE_ALTS_SOURCE_ID, geoJson))
-        style.addLayer(LineLayer(ROUTE_ALT_CASING_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
+        style.addLayerBelowVehicle(LineLayer(ROUTE_ALT_CASING_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
             Expression.eq(Expression.get("selected"), "false")
         ).withProperties(
             PropertyFactory.lineColor("#FFFFFF"),
@@ -503,7 +504,7 @@ private fun updateRouteAlternativesLayer(
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
             PropertyFactory.lineOpacity(0.45f),
         ))
-        style.addLayer(LineLayer(ROUTE_ALT_LINE_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
+        style.addLayerBelowVehicle(LineLayer(ROUTE_ALT_LINE_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
             Expression.eq(Expression.get("selected"), "false")
         ).withProperties(
             PropertyFactory.lineColor("#64748B"),
@@ -512,7 +513,7 @@ private fun updateRouteAlternativesLayer(
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
             PropertyFactory.lineOpacity(0.72f),
         ))
-        style.addLayer(LineLayer(ROUTE_SELECTED_CASING_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
+        style.addLayerBelowVehicle(LineLayer(ROUTE_SELECTED_CASING_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
             Expression.eq(Expression.get("selected"), "true")
         ).withProperties(
             PropertyFactory.lineColor("#FFFFFF"),
@@ -521,7 +522,7 @@ private fun updateRouteAlternativesLayer(
             PropertyFactory.lineJoin(Property.LINE_JOIN_ROUND),
             PropertyFactory.lineOpacity(0.68f),
         ))
-        style.addLayer(LineLayer(ROUTE_SELECTED_LINE_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
+        style.addLayerBelowVehicle(LineLayer(ROUTE_SELECTED_LINE_ID, ROUTE_ALTS_SOURCE_ID).withFilter(
             Expression.eq(Expression.get("selected"), "true")
         ).withProperties(
             PropertyFactory.lineColor("#2563EB"),
@@ -532,6 +533,14 @@ private fun updateRouteAlternativesLayer(
         ))
     } catch (e: Exception) {
         Log.e("NavMapView", "add route alternatives failed: $e")
+    }
+}
+
+private fun Style.addLayerBelowVehicle(layer: Layer) {
+    if (getLayer(VEHICLE_LAYER_ID) != null) {
+        addLayerBelow(layer, VEHICLE_LAYER_ID)
+    } else {
+        addLayer(layer)
     }
 }
 
