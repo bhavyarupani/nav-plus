@@ -23,6 +23,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -334,9 +335,12 @@ private fun NavigationHud(
             .navigationBarsPadding(),
     ) {
         val lanePreview = if (settings.showLaneGuidance) progress.upcomingLaneGuidancePreview() else null
-        ManeuverCard(progress = progress, onOptionsClick = onOptionsClick, onStopClick = onStopClick)
-
-        lanePreview?.let { LaneGuidanceView(it) }
+        ManeuverCard(
+            progress = progress,
+            lanePreview = lanePreview,
+            onOptionsClick = onOptionsClick,
+            onStopClick = onStopClick,
+        )
 
         if (settings.showSignboards && progress.signboard != null && progress.isApproachingManeuver) {
             SignboardView(progress.signboard!!)
@@ -374,11 +378,12 @@ private fun NavigationHud(
             },
         )
 
-        if (settings.groupDriveEnabled && settings.showGroupPanel) {
-            groupSession?.let { GroupEtaBar(it) }
-        }
-
-        BottomInfoBar(progress, currentSpeedKph, settings)
+        BottomInfoBar(
+            progress = progress,
+            currentSpeedKph = currentSpeedKph,
+            settings = settings,
+            groupSession = groupSession.takeIf { settings.groupDriveEnabled && settings.showGroupPanel },
+        )
     }
 }
 
@@ -790,39 +795,32 @@ private fun QuickOptionButton(
 @Composable
 private fun LaneGuidanceView(preview: LaneGuidancePreview) {
     val recommended = preview.guidance.resolvedRecommendedIndices(preview.maneuver)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 1.dp),
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFF111827).copy(alpha = 0.72f),
     ) {
-        Surface(
-            modifier = Modifier.align(Alignment.Center),
-            shape = RoundedCornerShape(12.dp),
-            color = Color(0xFF121827).copy(alpha = 0.86f),
+        Row(
+            modifier = Modifier
+                .height(34.dp)
+                .padding(horizontal = 7.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
         ) {
-            Row(
-                modifier = Modifier
-                    .height(46.dp)
-                    .padding(horizontal = 9.dp, vertical = 5.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.Center,
-            ) {
-                preview.guidance.lanes.take(5).forEachIndexed { index, lane ->
-                    CompactLanePill(
-                        lane = lane,
-                        isRecommended = index in recommended,
-                        fallbackDirection = preview.maneuver.preferredLaneDirections().first(),
-                    )
-                }
-                Spacer(Modifier.width(7.dp))
-                Text(
-                    formatDistance(preview.distanceMeters),
-                    color = Color(0xFFCBD5E1),
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 11.sp,
-                    maxLines = 1,
+            preview.guidance.lanes.take(5).forEachIndexed { index, lane ->
+                CompactLanePill(
+                    lane = lane,
+                    isRecommended = index in recommended,
+                    fallbackDirection = preview.maneuver.preferredLaneDirections().first(),
                 )
             }
+            Spacer(Modifier.width(5.dp))
+            Text(
+                formatDistance(preview.distanceMeters),
+                color = Color(0xFFCBD5E1),
+                fontWeight = FontWeight.Bold,
+                fontSize = 9.sp,
+                maxLines = 1,
+            )
         }
     }
 }
@@ -836,11 +834,11 @@ private fun CompactLanePill(
     val activeColor = Color(0xFF38BDF8)
     val inactiveColor = Color(0xFF6B7280)
     val directions = lane.directions.ifEmpty { listOf(fallbackDirection) }
-    val width = if (isRecommended) 32.dp else 24.dp
+    val width = if (isRecommended) 24.dp else 18.dp
     Box(
         modifier = Modifier
             .padding(horizontal = 2.dp)
-            .size(width = width, height = 34.dp)
+            .size(width = width, height = 25.dp)
             .background(
                 if (isRecommended) activeColor.copy(alpha = 0.20f) else Color(0xFF1F2937).copy(alpha = 0.82f),
                 RoundedCornerShape(12.dp),
@@ -850,17 +848,17 @@ private fun CompactLanePill(
                 color = if (isRecommended) activeColor else Color(0xFF374151),
                 shape = RoundedCornerShape(12.dp),
             )
-            .padding(horizontal = 5.dp, vertical = 4.dp),
+            .padding(horizontal = 3.dp, vertical = 3.dp),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             if (isRecommended) {
-                drawLaneDirections(directions, activeColor.copy(alpha = 0.24f), strokeWidth = 6f)
+                drawLaneDirections(directions, activeColor.copy(alpha = 0.24f), strokeWidth = 5f)
             }
             drawLaneDirections(
                 directions = directions,
                 color = if (isRecommended) activeColor else inactiveColor,
-                strokeWidth = if (isRecommended) 4f else 3f,
+                strokeWidth = if (isRecommended) 3.4f else 2.7f,
             )
         }
     }
@@ -1373,6 +1371,7 @@ private fun SignboardView(signboard: Signboard) {
 @Composable
 private fun ManeuverCard(
     progress: RouteProgress,
+    lanePreview: LaneGuidancePreview?,
     onOptionsClick: () -> Unit,
     onStopClick: () -> Unit,
 ) {
@@ -1385,28 +1384,28 @@ private fun ManeuverCard(
         modifier = Modifier
             .fillMaxWidth()
             .statusBarsPadding()
-            .padding(horizontal = 12.dp, vertical = 10.dp),
-        shape = RoundedCornerShape(16.dp),
+            .padding(horizontal = 12.dp, vertical = 8.dp),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C2E)),
         elevation = CardDefaults.cardElevation(8.dp),
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 18.dp, vertical = 18.dp),
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DirectionalManeuverIcon(progress = progress, modifier = Modifier.size(76.dp))
-            Spacer(Modifier.width(14.dp))
+            DirectionalManeuverIcon(progress = progress, modifier = Modifier.size(58.dp))
+            Spacer(Modifier.width(11.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     formatManeuverDistance(progress),
-                    fontSize = 38.sp,
+                    fontSize = 32.sp,
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                 )
                 Text(
                     instruction,
-                    fontSize = 20.sp,
-                    lineHeight = 24.sp,
+                    fontSize = 18.sp,
+                    lineHeight = 21.sp,
                     color = Color(0xFFB0B8CC),
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
@@ -1414,16 +1413,20 @@ private fun ManeuverCard(
                 progress.nextStreetName?.let {
                     Text(it, style = MaterialTheme.typography.labelMedium, color = Color(0xFF6B7A99))
                 }
+                if (lanePreview != null) {
+                    Spacer(Modifier.height(8.dp))
+                    LaneGuidanceView(lanePreview)
+                }
             }
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                IconButton(onClick = onStopClick, modifier = Modifier.size(42.dp)) {
+                IconButton(onClick = onStopClick, modifier = Modifier.size(36.dp)) {
                     Icon(
                         Icons.Rounded.Close,
                         contentDescription = "Stop navigation",
                         tint = Color(0xFFE2E8F0),
                     )
                 }
-                IconButton(onClick = onOptionsClick, modifier = Modifier.size(42.dp)) {
+                IconButton(onClick = onOptionsClick, modifier = Modifier.size(36.dp)) {
                     Icon(
                         Icons.Rounded.MoreVert,
                         contentDescription = "Navigation options",
@@ -1940,39 +1943,124 @@ private fun ManeuverIcon(maneuver: Maneuver, modifier: Modifier = Modifier) {
 // ─── Bottom info bar ──────────────────────────────────────────────────────────
 
 @Composable
-private fun BottomInfoBar(progress: RouteProgress, currentSpeedKph: Float, settings: UserSettings) {
-    Card(
+private fun BottomInfoBar(
+    progress: RouteProgress,
+    currentSpeedKph: Float,
+    settings: UserSettings,
+    groupSession: GroupSession?,
+) {
+    val groupEta = groupSession
+        ?.takeIf { it.members.size >= 2 }
+        ?.groupEtaSec
+        ?.let { formatEta(it) }
+    Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(start = 12.dp, end = 12.dp, bottom = 12.dp, top = 4.dp),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1C1C2E)),
-        elevation = CardDefaults.cardElevation(8.dp),
+            .padding(start = 12.dp, end = 12.dp, bottom = 8.dp, top = 2.dp),
+        shape = RoundedCornerShape(13.dp),
+        color = Color(0xFF141827).copy(alpha = 0.95f),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 16.dp),
+                .height(58.dp)
+                .padding(horizontal = 13.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            InfoColumn(label = "ETA", value = formatEta(progress.durationRemainingSeconds))
-            SpeedDisplay(
+            InfoColumn(label = "ETA", value = formatEta(progress.durationRemainingSeconds), compact = true)
+            CompactSpeedMeter(
                 speedKph = currentSpeedKph,
                 limitKph = if (settings.showSpeedLimit) progress.speedLimitKph else null,
                 units = settings.units,
                 threshold = settings.speedWarningThreshold,
             )
-            InfoColumn(label = "Left", value = formatDistance(progress.distanceRemainingMeters, settings.units))
+            InfoColumn(
+                label = groupEta?.let { "Left · G $it" } ?: "Left",
+                value = formatDistance(progress.distanceRemainingMeters, settings.units),
+                compact = true,
+            )
         }
     }
 }
 
 @Composable
-private fun InfoColumn(label: String, value: String) {
+private fun InfoColumn(label: String, value: String, compact: Boolean = false) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
-        Text(label, color = Color(0xFF6B7A99), style = MaterialTheme.typography.labelSmall)
+        Text(
+            value,
+            color = Color.White,
+            fontWeight = FontWeight.Bold,
+            fontSize = if (compact) 16.sp else 20.sp,
+            maxLines = 1,
+        )
+        Text(label, color = Color(0xFF6B7A99), fontSize = if (compact) 10.sp else 12.sp, maxLines = 1)
+    }
+}
+
+@Composable
+private fun CompactSpeedMeter(
+    speedKph: Float,
+    limitKph: Int?,
+    units: DistanceUnits,
+    threshold: SpeedWarningThreshold,
+) {
+    val displaySpeed = if (units == DistanceUnits.IMPERIAL) (speedKph * 0.621371f).roundToInt()
+    else speedKph.roundToInt()
+    val displayLimit = if (units == DistanceUnits.IMPERIAL) limitKph?.let { (it * 0.621371f).roundToInt() }
+    else limitKph
+    val unitLabel = if (units == DistanceUnits.IMPERIAL) "mph" else "km/h"
+    val thresholdKph = when (threshold) {
+        SpeedWarningThreshold.EXACT -> 0
+        SpeedWarningThreshold.PLUS_3 -> 3
+        SpeedWarningThreshold.PLUS_5 -> 5
+        SpeedWarningThreshold.PLUS_10 -> 10
+    }
+    val overLimit = displayLimit != null && displaySpeed > displayLimit + thresholdKph
+    val nearLimit = displayLimit != null && displaySpeed >= displayLimit - 2
+    val ringColor = when {
+        overLimit -> Color(0xFFEF4444)
+        nearLimit -> Color(0xFFF59E0B)
+        displayLimit == null -> Color(0xFF94A3B8)
+        else -> Color(0xFF22C55E)
+    }
+    val speedColor = if (overLimit) Color(0xFFEF4444) else Color.White
+    val pulse by rememberInfiniteTransition(label = "compact-speed-ring").animateFloat(
+        initialValue = 0.46f,
+        targetValue = 0.88f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(durationMillis = if (overLimit) 620 else 1_600),
+            repeatMode = RepeatMode.Reverse,
+        ),
+        label = "compact-speed-ring-alpha",
+    )
+
+    Row(
+        modifier = Modifier
+            .height(46.dp)
+            .background(Color(0xFF1C1F32), RoundedCornerShape(23.dp))
+            .padding(start = 6.dp, end = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(modifier = Modifier.size(42.dp), contentAlignment = Alignment.Center) {
+            Canvas(Modifier.size(39.dp)) {
+                drawCircle(
+                    color = ringColor.copy(alpha = pulse),
+                    radius = size.minDimension / 2f - 4f,
+                    style = Stroke(
+                        width = if (overLimit) 5.5f else 4f,
+                        cap = StrokeCap.Round,
+                        pathEffect = if (displayLimit == null) PathEffect.dashPathEffect(floatArrayOf(8f, 7f)) else null,
+                    ),
+                )
+            }
+            if (displayLimit != null) SpeedLimitBadge(displayLimit, sizeDp = 29)
+        }
+        Spacer(Modifier.width(7.dp))
+        Column(horizontalAlignment = Alignment.Start) {
+            Text("$displaySpeed", color = speedColor, fontWeight = FontWeight.Bold, fontSize = 23.sp, maxLines = 1)
+            Text(unitLabel, color = Color(0xFF94A3B8), fontSize = 9.sp, maxLines = 1)
+        }
     }
 }
 
@@ -2046,21 +2134,24 @@ private fun SpeedDisplay(
 }
 
 @Composable
-private fun SpeedLimitBadge(kph: Int) {
+private fun SpeedLimitBadge(kph: Int, sizeDp: Int = 44) {
+    val outer = sizeDp.dp
+    val inner = (sizeDp - 4).coerceAtLeast(24).dp
+    val border = if (sizeDp <= 34) 2.dp else 3.dp
     Box(
         modifier = Modifier
-            .size(44.dp)
+            .size(outer)
             .background(Color.White, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
         Box(
             modifier = Modifier
-                .size(40.dp)
+                .size(inner)
                 .background(Color.White, CircleShape)
-                .border(3.dp, Color(0xFFCC0000), CircleShape),
+                .border(border, Color(0xFFCC0000), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Text("$kph", color = Color(0xFF111111), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+            Text("$kph", color = Color(0xFF111111), fontWeight = FontWeight.Bold, fontSize = if (sizeDp <= 34) 12.sp else 14.sp)
         }
     }
 }
@@ -2090,38 +2181,40 @@ private fun NextDrivingAlert(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(11.dp),
         color = color,
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            modifier = Modifier
+                .heightIn(min = 50.dp)
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (signKind != null) {
-                RoadSignIcon(kind = signKind, modifier = Modifier.size(52.dp))
+                RoadSignIcon(kind = signKind, modifier = Modifier.size(34.dp))
             } else {
-                Text(icon, fontSize = 24.sp)
+                Text(icon, fontSize = 16.sp)
             }
-            Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     title,
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 18.sp,
+                    fontSize = 15.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     "${formatDistance(distanceMeters, units)} · $subtitle",
                     color = Color.White.copy(alpha = 0.8f),
-                    fontSize = 13.sp,
+                    fontSize = 11.sp,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            alert?.speedLimitKph?.let { limit -> SpeedLimitBadge(limit.toDisplaySpeed(units)) }
+            alert?.speedLimitKph?.let { limit -> SpeedLimitBadge(limit.toDisplaySpeed(units), sizeDp = 32) }
         }
     }
 }
@@ -2195,19 +2288,22 @@ private fun HazardStrip(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF111827).copy(alpha = 0.93f),
+            .padding(horizontal = 12.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(11.dp),
+        color = Color(0xFF111827).copy(alpha = 0.88f),
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 10.dp, vertical = 9.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                .height(44.dp)
+                .padding(horizontal = 8.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("3 km", color = Color(0xFF94A3B8), fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("3", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp, maxLines = 1)
+                Text("km", color = Color(0xFF94A3B8), fontSize = 9.sp, maxLines = 1)
+            }
             upcoming.forEach { event ->
                 HazardChip(event = event, units = units)
             }
@@ -2224,31 +2320,25 @@ private fun HazardChip(event: LookaheadEvent, units: DistanceUnits) {
     }
     Column(
         modifier = Modifier
-            .width(72.dp)
-            .background(Color(0xFF1F2937), RoundedCornerShape(10.dp))
-            .border(1.dp, color.copy(alpha = 0.65f), RoundedCornerShape(10.dp))
-            .padding(horizontal = 6.dp, vertical = 6.dp),
+            .width(54.dp)
+            .height(34.dp)
+            .background(Color(0xFF1B2433).copy(alpha = 0.88f), RoundedCornerShape(8.dp))
+            .border(1.dp, color.copy(alpha = 0.62f), RoundedCornerShape(8.dp))
+            .padding(horizontal = 3.dp, vertical = 2.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val signKind = event.roadSignKind()
         if (signKind != null) {
-            RoadSignIcon(kind = signKind, modifier = Modifier.size(30.dp))
+            RoadSignIcon(kind = signKind, modifier = Modifier.size(18.dp))
         } else {
-            Text(event.emoji, fontSize = 16.sp, maxLines = 1)
+            Text(event.emoji, fontSize = 12.sp, maxLines = 1)
         }
         Text(
             formatDistance(event.distanceMeters, units),
             color = Color.White,
             fontWeight = FontWeight.Bold,
-            fontSize = 11.sp,
+            fontSize = 9.sp,
             maxLines = 1,
-        )
-        Text(
-            event.shortTitle(),
-            color = Color(0xFFB0B8CC),
-            fontSize = 10.sp,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
     }
 }
@@ -2612,15 +2702,16 @@ private fun GroupEtaBar(session: GroupSession) {
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        color = Color(0xFF1C1C2E).copy(alpha = 0.92f),
+            .padding(horizontal = 12.dp, vertical = 3.dp),
+        shape = RoundedCornerShape(11.dp),
+        color = Color(0xFF1C1C2E).copy(alpha = 0.86f),
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                .height(44.dp)
+                .padding(horizontal = 12.dp, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             session.sortedMembers.take(4).forEach { member ->
@@ -2634,7 +2725,7 @@ private fun GroupEtaBar(session: GroupSession) {
                             member.hasDeviated -> Color(0xFFF59E0B)
                             else -> Color(0xFF94A3B8)
                         },
-                        style = MaterialTheme.typography.labelSmall,
+                        fontSize = 10.sp,
                         fontWeight = if (isSelf || member.hasDeviated) FontWeight.SemiBold else FontWeight.Normal,
                     )
                     Text(
@@ -2644,7 +2735,7 @@ private fun GroupEtaBar(session: GroupSession) {
                             member.hasDeviated -> Color(0xFFF59E0B)
                             else -> Color(0xFFB0B8CC)
                         },
-                        style = MaterialTheme.typography.labelMedium,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                     )
                 }
@@ -2652,8 +2743,8 @@ private fun GroupEtaBar(session: GroupSession) {
             Spacer(Modifier.weight(1f))
             session.groupEtaSec?.let { eta ->
                 Column(horizontalAlignment = Alignment.End) {
-                    Text("Group", color = Color(0xFF6B7A99), style = MaterialTheme.typography.labelSmall)
-                    Text(formatEta(eta), color = Color(0xFFF59E0B), style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                    Text("Group", color = Color(0xFF6B7A99), fontSize = 10.sp)
+                    Text(formatEta(eta), color = Color(0xFFF59E0B), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
