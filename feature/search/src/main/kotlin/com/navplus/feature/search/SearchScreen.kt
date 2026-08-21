@@ -1,6 +1,7 @@
 package com.navplus.feature.search
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -43,10 +44,14 @@ import com.navplus.core.search.model.SearchResult
 fun SearchScreen(
     onBack: () -> Unit,
     onResultSelected: (SearchResult) -> Unit,
+    initialQuery: String? = null,
     nearLocation: LatLng? = null,
     vm: SearchViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(nearLocation) { vm.nearLocation = nearLocation }
+    LaunchedEffect(initialQuery) {
+        if (!initialQuery.isNullOrBlank()) vm.onQueryChange(initialQuery)
+    }
 
     val query by vm.query.collectAsStateWithLifecycle()
     val results by vm.results.collectAsStateWithLifecycle()
@@ -95,14 +100,35 @@ fun SearchScreen(
                         .size(32.dp)
                 )
             } else {
-                LazyColumn {
-                    items(results, key = { it.id }) { result ->
-                        SearchResultItem(result = result, onClick = { onResultSelected(result) })
-                        Divider(modifier = Modifier.padding(start = 56.dp))
+                when {
+                    query.length < 2 -> SearchEmptyState("Search by address, place, or category.")
+                    results.isEmpty() -> SearchEmptyState("No results found.")
+                    else -> {
+                        LazyColumn {
+                            items(results, key = { it.id }) { result ->
+                                SearchResultItem(result = result, onClick = { onResultSelected(result) })
+                                Divider(modifier = Modifier.padding(start = 56.dp))
+                            }
+                        }
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SearchEmptyState(message: String) {
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = message,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(24.dp),
+        )
     }
 }
 

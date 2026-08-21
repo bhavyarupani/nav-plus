@@ -30,6 +30,7 @@ dependencies {
     implementation(project(":core:safety"))
 
     testImplementation(libs.junit)
+    testImplementation(libs.json)
     testImplementation(libs.coroutines.test)
     testImplementation(libs.turbine)
 }

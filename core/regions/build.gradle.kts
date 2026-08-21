@@ -6,6 +6,8 @@ plugins {
     alias(libs.plugins.room)
 }
 
+layout.buildDirectory.set(file("/tmp/navplus-build/core-regions"))
+
 android {
     namespace  = "com.navplus.core.regions"
     compileSdk = libs.versions.compileSdk.get().toInt()
@@ -17,7 +19,11 @@ android {
     kotlinOptions { jvmTarget = "17" }
 }
 
-room { schemaDirectory("$projectDir/schemas") }
+room {
+    // KSP rejects Room processor args containing spaces. This workspace is under
+    // "Nav Plus", so generated schemas must go through a no-space path.
+    schemaDirectory("/tmp/navplus-room-schemas/regions")
+}
 
 dependencies {
     implementation(libs.core.ktx)

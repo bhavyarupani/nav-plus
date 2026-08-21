@@ -8,6 +8,7 @@ data class Route(
     val distanceMeters: Double,
     val durationSeconds: Long,
     val style: RouteStyle = RouteStyle.FASTEST,
+    val trafficDelaySeconds: Long = 0L,
     val hasTolls: Boolean = false,
     val hasHighways: Boolean = false,
     val ascendMeters: Double = 0.0,
@@ -29,7 +30,15 @@ data class RouteStep(
     val speedLimitKph: Int? = null,
 )
 
-enum class RouteStyle { FASTEST, SCENIC, AVOID_HIGHWAYS, AVOID_TOLLS }
+enum class RouteStyle {
+    FASTEST,
+    SIMPLE,
+    SCENIC,
+    SAFER,
+    LOW_STRESS,
+    AVOID_HIGHWAYS,
+    AVOID_TOLLS,
+}
 
 data class LaneGuidance(
     val lanes: List<Lane>,

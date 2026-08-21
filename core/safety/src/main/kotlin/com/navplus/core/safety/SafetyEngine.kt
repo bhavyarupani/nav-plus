@@ -4,6 +4,7 @@ import com.navplus.core.common.model.LatLng
 import com.navplus.core.common.model.RoadEventType
 import com.navplus.core.common.model.Route
 import com.navplus.core.common.model.Severity
+import com.navplus.core.common.model.bearingTo
 import com.navplus.core.common.model.distanceTo
 import com.navplus.core.safety.model.CameraType
 import com.navplus.core.safety.model.SafetyAlert
@@ -36,28 +37,21 @@ class SafetyEngine @Inject constructor(
     suspend fun updatePosition(position: LatLng, headingDeg: Float, speedKph: Float) {
         val route = activeRoute ?: return
 
-        val lookaheadMeters = when {
-            speedKph > 120 -> 3_000.0
-            speedKph > 80  -> 2_500.0
-            else           -> 2_000.0
-        }
-
-        val routeSegmentAhead = route.geometry.filter { point ->
-            val dist = position.distanceTo(point)
-            dist in 0.0..lookaheadMeters
-        }
+        val lookaheadMeters = CAMERA_LOOKAHEAD_METERS
+        val routeProgressMeters = route.distanceAlongRoute(position)
 
         val cameras = cameraRepository.getCamerasNear(
             lat = position.lat, lng = position.lng, radiusMeters = lookaheadMeters
         )
 
         val relevantAlerts = cameras
-            .filter { camera -> isCameraRelevant(camera, routeSegmentAhead, headingDeg) }
-            .map { camera ->
+            .mapNotNull { camera ->
+                val match = camera.routeMatch(route, routeProgressMeters) ?: return@mapNotNull null
+                if (!isCameraRelevant(camera, match, headingDeg)) return@mapNotNull null
                 SafetyAlert(
                     id = camera.id,
                     type = camera.type.toEventType(),
-                    distanceMeters = position.distanceTo(camera.position),
+                    distanceMeters = match.distanceAheadMeters,
                     severity = alertSeverity(camera, speedKph),
                     title = camera.type.displayName(),
                     speedLimitKph = camera.speedLimitKph,
@@ -71,14 +65,15 @@ class SafetyEngine @Inject constructor(
 
     private fun isCameraRelevant(
         camera: SpeedCamera,
-        routeAhead: List<LatLng>,
+        match: RouteCameraMatch,
         headingDeg: Float,
     ): Boolean {
-        val isNearRoute = routeAhead.any { point -> point.distanceTo(camera.position) < ROUTE_MATCH_RADIUS_M }
-        if (!isNearRoute) return false
+        if (match.distanceFromRouteMeters > ROUTE_MATCH_RADIUS_M) return false
+        if (match.distanceAheadMeters !in 0.0..CAMERA_LOOKAHEAD_METERS) return false
 
         val cameraDir = camera.directionDeg ?: return true
-        val headingDiff = abs(((headingDeg - cameraDir + 540) % 360) - 180)
+        val routeHeading = match.routeBearingDeg.takeIf { !it.isNaN() } ?: headingDeg
+        val headingDiff = abs(((routeHeading - cameraDir + 540) % 360) - 180)
         return headingDiff < DIRECTION_TOLERANCE_DEG
     }
 
@@ -93,9 +88,83 @@ class SafetyEngine @Inject constructor(
     }
 
     companion object {
-        private const val ROUTE_MATCH_RADIUS_M = 30.0
+        private const val CAMERA_LOOKAHEAD_METERS = 3_000.0
+        private const val ROUTE_MATCH_RADIUS_M = 45.0
         private const val DIRECTION_TOLERANCE_DEG = 45f
     }
+}
+
+private data class RouteCameraMatch(
+    val distanceAheadMeters: Double,
+    val distanceFromRouteMeters: Double,
+    val routeBearingDeg: Float,
+)
+
+private fun SpeedCamera.routeMatch(route: Route, routeProgressMeters: Double): RouteCameraMatch? {
+    if (route.geometry.size < 2) return null
+    var accumulated = 0.0
+    var best: RouteCameraMatch? = null
+    val cameraPosition = position
+
+    for (i in 0 until route.geometry.lastIndex) {
+        val start = route.geometry[i]
+        val end = route.geometry[i + 1]
+        val segmentMeters = start.distanceTo(end)
+        if (segmentMeters <= 0.0) continue
+
+        val projected = cameraPosition.projectOntoSegment(start, end)
+        val distanceFromRoute = cameraPosition.distanceTo(projected)
+        val distanceOnSegment = start.distanceTo(projected).coerceIn(0.0, segmentMeters)
+        val distanceFromStart = accumulated + distanceOnSegment
+        val distanceAhead = distanceFromStart - routeProgressMeters
+        val candidate = RouteCameraMatch(
+            distanceAheadMeters = distanceAhead,
+            distanceFromRouteMeters = distanceFromRoute,
+            routeBearingDeg = start.bearingTo(end).toFloat(),
+        )
+        if (best == null || distanceFromRoute < best.distanceFromRouteMeters) {
+            best = candidate
+        }
+        accumulated += segmentMeters
+    }
+
+    return best
+}
+
+private fun Route.distanceAlongRoute(position: LatLng): Double {
+    if (geometry.size < 2) return 0.0
+    var accumulated = 0.0
+    var bestDistanceFromStart = 0.0
+    var bestDistanceFromRoute = Double.MAX_VALUE
+
+    for (i in 0 until geometry.lastIndex) {
+        val start = geometry[i]
+        val end = geometry[i + 1]
+        val segmentMeters = start.distanceTo(end)
+        if (segmentMeters <= 0.0) continue
+
+        val projected = position.projectOntoSegment(start, end)
+        val distanceFromRoute = position.distanceTo(projected)
+        if (distanceFromRoute < bestDistanceFromRoute) {
+            bestDistanceFromRoute = distanceFromRoute
+            bestDistanceFromStart = accumulated + start.distanceTo(projected).coerceIn(0.0, segmentMeters)
+        }
+        accumulated += segmentMeters
+    }
+
+    return bestDistanceFromStart
+}
+
+private fun LatLng.projectOntoSegment(start: LatLng, end: LatLng): LatLng {
+    val ax = end.lng - start.lng
+    val ay = end.lat - start.lat
+    val denom = ax * ax + ay * ay
+    if (denom == 0.0) return start
+    val t = (((lng - start.lng) * ax + (lat - start.lat) * ay) / denom).coerceIn(0.0, 1.0)
+    return LatLng(
+        lat = start.lat + t * ay,
+        lng = start.lng + t * ax,
+    )
 }
 
 private fun CameraType.toEventType() = when (this) {

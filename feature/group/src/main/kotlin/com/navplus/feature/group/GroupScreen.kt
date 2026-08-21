@@ -69,7 +69,10 @@ fun GroupScreen(
                 if (session!!.isLeader) {
                     Spacer(Modifier.weight(1f))
                     GroupLeaderActions(
-                        onProposeStop = { showVoting = true },
+                        onProposeStop = {
+                            vm.proposeStop(DEFAULT_STOP_OPTIONS)
+                            showVoting = true
+                        },
                     )
                 }
             }
@@ -240,7 +243,7 @@ private fun ConvoyMemberCard(member: GroupMember, isSelf: Boolean) {
                 Modifier.size(40.dp).clip(CircleShape).background(memberColor.copy(alpha = 0.2f)),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(member.name.first().toString(), color = memberColor, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text(member.name.firstOrNull()?.toString() ?: "?", color = memberColor, fontWeight = FontWeight.Bold, fontSize = 18.sp)
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
@@ -294,3 +297,11 @@ private fun formatDist(meters: Double): String = when {
     meters >= 1_000 -> "${"%.0f".format(meters / 1_000)} km"
     else -> "${meters.toInt()} m"
 }
+
+private val DEFAULT_STOP_OPTIONS = listOf(
+    StopOptionType.FUEL,
+    StopOptionType.FOOD,
+    StopOptionType.SUPERMARKET,
+    StopOptionType.REST,
+    StopOptionType.COFFEE,
+)

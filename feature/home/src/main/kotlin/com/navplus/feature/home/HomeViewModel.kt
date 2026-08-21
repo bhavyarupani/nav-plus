@@ -7,10 +7,13 @@ import com.navplus.core.common.model.distanceTo
 import com.navplus.core.connectivity.ConnectivityState
 import com.navplus.core.connectivity.NetworkConnectivityManager
 import com.navplus.core.map.CameraMarker
+import com.navplus.core.map.TrafficTileProvider
 import com.navplus.core.navigation.LocationTracker
 import com.navplus.core.safety.OverpassCameraFetcher
+import com.navplus.core.safety.SpeedCameraAssetSeeder
 import com.navplus.core.safety.SpeedCameraDao
 import com.navplus.core.safety.model.CameraType
+import com.navplus.core.safety.model.SpeedCamera
 import com.navplus.core.settings.SettingsRepository
 import com.navplus.core.settings.UserSettings
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -25,6 +28,8 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+import javax.inject.Named
+import kotlin.math.roundToInt
 
 data class NearbyCamera(
     val distanceMeters: Double,
@@ -38,7 +43,9 @@ class HomeViewModel @Inject constructor(
     private val connectivity: NetworkConnectivityManager,
     private val cameraDao: SpeedCameraDao,
     private val overpassFetcher: OverpassCameraFetcher,
+    private val speedCameraAssetSeeder: SpeedCameraAssetSeeder,
     private val settingsRepo: SettingsRepository,
+    @Named("tomtom_api_key") private val tomTomApiKey: String,
 ) : ViewModel() {
 
     val connectivityState: StateFlow<ConnectivityState> = connectivity.state
@@ -47,24 +54,42 @@ class HomeViewModel @Inject constructor(
     val settings: StateFlow<UserSettings> = settingsRepo.settings
         .stateIn(viewModelScope, SharingStarted.Eagerly, UserSettings())
 
+    val trafficFlowTileUrls: StateFlow<List<String>> = combine(
+        settings,
+        connectivityState,
+    ) { s, connectivityState ->
+        if (s.trafficFeaturesEnabled && s.showTrafficLayer && connectivityState.isOnline) {
+            TrafficTileProvider.tomTomFlowTileUrls(tomTomApiKey)
+        } else {
+            emptyList()
+        }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
     private val _userLocation = MutableStateFlow<Location?>(null)
     val userLocation: StateFlow<Location?> = _userLocation.asStateFlow()
 
     private val _nearbyCamera = MutableStateFlow<NearbyCamera?>(null)
     val nearbyCamera: StateFlow<NearbyCamera?> = _nearbyCamera.asStateFlow()
 
-    private val _visibleCameras = MutableStateFlow<List<com.navplus.core.safety.model.SpeedCamera>>(emptyList())
+    private val _selectedCamera = MutableStateFlow<CameraMarker?>(null)
+    val selectedCamera: StateFlow<CameraMarker?> = _selectedCamera.asStateFlow()
+
+    private val _visibleCameras = MutableStateFlow<List<SpeedCamera>>(emptyList())
 
     // Hides markers immediately when the user turns off the toggle in Settings.
     val visibleCameraMarkers: StateFlow<List<CameraMarker>> = combine(
         _visibleCameras, settings,
     ) { cameras, s ->
-        if (s.showSpeedCameras) cameras.map { it.toMarker() } else emptyList()
+        if (s.showSpeedCameras) cameras.deduplicatedForMap().map { it.toMarker() } else emptyList()
     }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var viewportJob: Job? = null
 
     init {
+        viewModelScope.launch {
+            speedCameraAssetSeeder.ensureSeeded()
+        }
+
         viewModelScope.launch {
             locationTracker.locationUpdates().collect { location ->
                 _userLocation.value = location
@@ -85,6 +110,14 @@ class HomeViewModel @Inject constructor(
         }
     }
 
+    fun onCameraTapped(camera: CameraMarker) {
+        _selectedCamera.value = camera
+    }
+
+    fun dismissCameraDetails() {
+        _selectedCamera.value = null
+    }
+
     private suspend fun refreshNearbyCamera(location: Location) {
         if (!settings.value.showSpeedCameras) {
             _nearbyCamera.value = null
@@ -101,9 +134,29 @@ class HomeViewModel @Inject constructor(
         } else null
     }
 
-    private fun com.navplus.core.safety.model.SpeedCamera.toMarker() = CameraMarker(
+    private fun List<SpeedCamera>.deduplicatedForMap(): List<SpeedCamera> {
+        return groupBy { camera ->
+            "${(camera.lat * 100_000).roundToInt()},${(camera.lng * 100_000).roundToInt()}"
+        }.values.map { group ->
+            group.maxBy { it.mapMarkerRank() }
+        }
+    }
+
+    private fun SpeedCamera.mapMarkerRank(): Float {
+        return confidence +
+            (if (speedLimitKph != null) 4f else 0f) +
+            (if (type != CameraType.FIXED_SPEED) 3f else 0f) +
+            (if (source == "overpass") 0.2f else 0f)
+    }
+
+    private fun SpeedCamera.toMarker() = CameraMarker(
         position = position,
         speedLimitKph = speedLimitKph,
         typeCode = type.name,
+        id = id,
+        source = source,
+        confidence = confidence,
+        lastUpdatedMs = lastUpdatedMs,
+        country = country,
     )
 }

@@ -1,6 +1,7 @@
 package com.navplus.core.search
 
 import com.navplus.core.common.model.LatLng
+import com.navplus.core.common.model.distanceTo
 import com.navplus.core.connectivity.ConnectivityState
 import com.navplus.core.connectivity.NetworkConnectivityManager
 import com.navplus.core.search.model.SearchResult
@@ -30,7 +31,7 @@ class SearchRepository @Inject constructor(
         val offline = offlineDeferred.await()
         val online = onlineDeferred?.await() ?: emptyList()
 
-        merge(offline, online)
+        merge(offline, online, near)
     }
 
     suspend fun reverseGeocode(position: LatLng): SearchResult? {
@@ -40,17 +41,24 @@ class SearchRepository @Inject constructor(
         return onlineProviders.firstOrNull { it.isAvailable }?.reverseGeocode(position)
     }
 
-    private fun merge(offline: List<SearchResult>, online: List<SearchResult>): List<SearchResult> {
+    private fun merge(offline: List<SearchResult>, online: List<SearchResult>, near: LatLng?): List<SearchResult> {
         val seen = mutableSetOf<String>()
         val result = mutableListOf<SearchResult>()
 
         for (r in offline) {
-            if (seen.add(normaliseKey(r))) result.add(r)
+            val ranked = r.withDistanceFrom(near)
+            if (seen.add(normaliseKey(ranked))) result.add(ranked)
         }
         for (r in online) {
-            if (seen.add(normaliseKey(r))) result.add(r)
+            val ranked = r.withDistanceFrom(near)
+            if (seen.add(normaliseKey(ranked))) result.add(ranked)
         }
         return result.sortedBy { it.distance ?: Double.MAX_VALUE }
+    }
+
+    private fun SearchResult.withDistanceFrom(near: LatLng?): SearchResult {
+        if (near == null || distance != null) return this
+        return copy(distance = near.distanceTo(position))
     }
 
     private fun normaliseKey(r: SearchResult) =

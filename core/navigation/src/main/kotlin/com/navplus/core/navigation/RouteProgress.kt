@@ -14,6 +14,7 @@ data class RouteProgress(
     val distanceRemainingMeters: Double,
     val durationRemainingSeconds: Long,
     val snappedLocation: LatLng,
+    val routeBearingDeg: Float = 0f,
     val nextManeuver: Maneuver,
     val nextInstruction: String,
     val nextStreetName: String?,
@@ -24,5 +25,5 @@ data class RouteProgress(
 ) {
     val currentStep: RouteStep get() = route.steps[currentStepIndex]
     val hasLaneGuidance: Boolean get() = laneGuidance != null
-    val isApproachingManeuver: Boolean get() = distanceToNextStepMeters < 300
+    val isApproachingManeuver: Boolean get() = distanceToNextStepMeters < 800
 }

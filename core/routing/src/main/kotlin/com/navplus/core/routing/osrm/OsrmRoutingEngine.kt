@@ -13,6 +13,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -20,6 +21,11 @@ import javax.inject.Singleton
 class OsrmRoutingEngine @Inject constructor(
     private val client: OkHttpClient,
 ) : RoutingEngine {
+    private val routingClient: OkHttpClient = client.newBuilder()
+        .connectTimeout(4, TimeUnit.SECONDS)
+        .readTimeout(8, TimeUnit.SECONDS)
+        .callTimeout(10, TimeUnit.SECONDS)
+        .build()
 
     override fun coversLocation(lat: Double, lng: Double) = true // online, always covers
 
@@ -27,7 +33,7 @@ class OsrmRoutingEngine @Inject constructor(
         withContext(Dispatchers.IO) {
             try {
                 val url = buildUrl(request)
-                val response = client.newCall(Request.Builder().url(url).build()).execute()
+                val response = routingClient.newCall(Request.Builder().url(url).build()).execute()
                 if (!response.isSuccessful) return@withContext RoutingResult.Error(Exception("HTTP ${response.code}"))
                 val body = response.body?.string() ?: return@withContext RoutingResult.Error(Exception("Empty body"))
                 val routes = parseOsrmResponse(body, request)
@@ -83,6 +89,7 @@ class OsrmRoutingEngine @Inject constructor(
                 steps = steps,
                 distanceMeters = r.getDouble("distance"),
                 durationSeconds = r.getDouble("duration").toLong(),
+                style = req.style,
             )
         }
     }
