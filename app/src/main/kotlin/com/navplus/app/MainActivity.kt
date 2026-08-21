@@ -7,22 +7,30 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -32,6 +40,7 @@ import com.navplus.app.ui.theme.NavPlusTheme
 import com.navplus.core.navigation.RoadScenarioSimulator
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
+import kotlinx.coroutines.delay
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
@@ -48,6 +57,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        setTheme(R.style.Theme_NavPlus)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val startRoadSimulation = intent?.action == ACTION_SIMULATE_DRIVE
@@ -73,7 +83,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             NavPlusTheme {
                 if (locationGranted) {
-                    AppNavHost(startRoadSimulation = startRoadSimulation)
+                    StartupGate(startRoadSimulation = startRoadSimulation) {
+                        AppNavHost(startRoadSimulation = startRoadSimulation)
+                    }
                 } else {
                     LocationPermissionRationale(
                         onGrant = {
@@ -94,7 +106,72 @@ class MainActivity : ComponentActivity() {
         const val ACTION_SIMULATE_DRIVE = "com.navplus.action.SIMULATE_DRIVE"
     }
 
-    @androidx.compose.runtime.Composable
+    @Composable
+    private fun StartupGate(
+        startRoadSimulation: Boolean,
+        content: @Composable () -> Unit,
+    ) {
+        var showLaunch by remember { mutableStateOf(true) }
+        LaunchedEffect(startRoadSimulation) {
+            delay(if (startRoadSimulation) 320L else 760L)
+            showLaunch = false
+        }
+        if (showLaunch) {
+            NavPlusLaunchScreen(startRoadSimulation)
+        } else {
+            content()
+        }
+    }
+
+    @Composable
+    private fun NavPlusLaunchScreen(startRoadSimulation: Boolean) {
+        Surface(color = Color(0xFF090E18), modifier = Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Canvas(modifier = Modifier.size(118.dp)) {
+                        val center = Offset(size.width / 2f, size.height / 2f)
+                        drawCircle(Color(0xFF111827), radius = size.minDimension * 0.48f, center = center)
+                        drawCircle(
+                            color = Color(0xFF38BDF8).copy(alpha = 0.42f),
+                            radius = size.minDimension * 0.40f,
+                            center = center,
+                            style = Stroke(width = 5f),
+                        )
+                        drawLine(
+                            color = Color(0xFF38BDF8),
+                            start = Offset(size.width * 0.50f, size.height * 0.78f),
+                            end = Offset(size.width * 0.50f, size.height * 0.30f),
+                            strokeWidth = 8f,
+                            cap = StrokeCap.Round,
+                        )
+                        drawLine(
+                            color = Color(0xFF38BDF8),
+                            start = Offset(size.width * 0.50f, size.height * 0.30f),
+                            end = Offset(size.width * 0.65f, size.height * 0.22f),
+                            strokeWidth = 8f,
+                            cap = StrokeCap.Round,
+                        )
+                        drawCircle(Color.White, radius = 7f, center = Offset(size.width * 0.65f, size.height * 0.22f))
+                    }
+                    Spacer(Modifier.height(18.dp))
+                    Text(
+                        "Nav Plus",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.headlineMedium,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        if (startRoadSimulation) "Starting drive simulation" else "Preparing your drive",
+                        color = Color(0xFF94A3B8),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            }
+        }
+    }
+
+    @Composable
     private fun LocationPermissionRationale(onGrant: () -> Unit) {
         Surface(color = Color(0xFF0F172A), modifier = Modifier.fillMaxSize()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.NavPlus.Launch" parent="Theme.NavPlus">
+        <item name="android:windowSplashScreenBackground">#090E18</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_navplus_splash</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">#090E18</item>
+        <item name="android:windowBackground">@drawable/splash_window</item>
+    </style>
+</resources>

@@ -32,6 +32,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -279,6 +280,10 @@ fun NavigationScreen(
                     currentSpeedKph = location?.speedKph ?: 0f,
                     settings = settings,
                     onOptionsClick = { showQuickOptions = true },
+                    onStopClick = {
+                        vm.stopNavigation()
+                        onExit()
+                    },
                 )
             }
             NavigationState.Rerouting -> ReroutingOverlay()
@@ -321,6 +326,7 @@ private fun NavigationHud(
     currentSpeedKph: Float,
     settings: UserSettings,
     onOptionsClick: () -> Unit,
+    onStopClick: () -> Unit,
 ) {
     Column(
         Modifier
@@ -328,7 +334,7 @@ private fun NavigationHud(
             .navigationBarsPadding(),
     ) {
         val lanePreview = if (settings.showLaneGuidance) progress.upcomingLaneGuidancePreview() else null
-        ManeuverCard(progress = progress, onOptionsClick = onOptionsClick)
+        ManeuverCard(progress = progress, onOptionsClick = onOptionsClick, onStopClick = onStopClick)
 
         lanePreview?.let { LaneGuidanceView(it) }
 
@@ -784,36 +790,39 @@ private fun QuickOptionButton(
 @Composable
 private fun LaneGuidanceView(preview: LaneGuidancePreview) {
     val recommended = preview.guidance.resolvedRecommendedIndices(preview.maneuver)
-    Surface(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 2.dp),
-        shape = RoundedCornerShape(14.dp),
-        color = Color(0xFF121827).copy(alpha = 0.88f),
+            .padding(horizontal = 12.dp, vertical = 1.dp),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(68.dp)
-                .padding(horizontal = 12.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
+        Surface(
+            modifier = Modifier.align(Alignment.Center),
+            shape = RoundedCornerShape(12.dp),
+            color = Color(0xFF121827).copy(alpha = 0.86f),
         ) {
-            preview.guidance.lanes.take(5).forEachIndexed { index, lane ->
-                CompactLanePill(
-                    lane = lane,
-                    isRecommended = index in recommended,
-                    fallbackDirection = preview.maneuver.preferredLaneDirections().first(),
+            Row(
+                modifier = Modifier
+                    .height(46.dp)
+                    .padding(horizontal = 9.dp, vertical = 5.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                preview.guidance.lanes.take(5).forEachIndexed { index, lane ->
+                    CompactLanePill(
+                        lane = lane,
+                        isRecommended = index in recommended,
+                        fallbackDirection = preview.maneuver.preferredLaneDirections().first(),
+                    )
+                }
+                Spacer(Modifier.width(7.dp))
+                Text(
+                    formatDistance(preview.distanceMeters),
+                    color = Color(0xFFCBD5E1),
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 11.sp,
+                    maxLines = 1,
                 )
             }
-            Spacer(Modifier.width(10.dp))
-            Text(
-                formatDistance(preview.distanceMeters),
-                color = Color(0xFF94A3B8),
-                fontWeight = FontWeight.Bold,
-                fontSize = 12.sp,
-                maxLines = 1,
-            )
         }
     }
 }
@@ -827,31 +836,31 @@ private fun CompactLanePill(
     val activeColor = Color(0xFF38BDF8)
     val inactiveColor = Color(0xFF6B7280)
     val directions = lane.directions.ifEmpty { listOf(fallbackDirection) }
-    val width = if (isRecommended) 42.dp else 32.dp
+    val width = if (isRecommended) 32.dp else 24.dp
     Box(
         modifier = Modifier
-            .padding(horizontal = 3.dp)
-            .size(width = width, height = 52.dp)
+            .padding(horizontal = 2.dp)
+            .size(width = width, height = 34.dp)
             .background(
                 if (isRecommended) activeColor.copy(alpha = 0.20f) else Color(0xFF1F2937).copy(alpha = 0.82f),
-                RoundedCornerShape(18.dp),
+                RoundedCornerShape(12.dp),
             )
             .border(
                 width = if (isRecommended) 2.dp else 1.dp,
                 color = if (isRecommended) activeColor else Color(0xFF374151),
-                shape = RoundedCornerShape(18.dp),
+                shape = RoundedCornerShape(12.dp),
             )
-            .padding(horizontal = 7.dp, vertical = 6.dp),
+            .padding(horizontal = 5.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
             if (isRecommended) {
-                drawLaneDirections(directions, activeColor.copy(alpha = 0.24f), strokeWidth = 8f)
+                drawLaneDirections(directions, activeColor.copy(alpha = 0.24f), strokeWidth = 6f)
             }
             drawLaneDirections(
                 directions = directions,
                 color = if (isRecommended) activeColor else inactiveColor,
-                strokeWidth = if (isRecommended) 5f else 3.8f,
+                strokeWidth = if (isRecommended) 4f else 3f,
             )
         }
     }
@@ -1362,7 +1371,11 @@ private fun SignboardView(signboard: Signboard) {
 // ─── Maneuver card ────────────────────────────────────────────────────────────
 
 @Composable
-private fun ManeuverCard(progress: RouteProgress, onOptionsClick: () -> Unit) {
+private fun ManeuverCard(
+    progress: RouteProgress,
+    onOptionsClick: () -> Unit,
+    onStopClick: () -> Unit,
+) {
     val instruction = when {
         progress.distanceRemainingMeters <= ARRIVAL_DISTANCE_METERS -> "Arrive at destination"
         progress.nextInstruction.isBlank() -> "Continue on route"
@@ -1402,13 +1415,21 @@ private fun ManeuverCard(progress: RouteProgress, onOptionsClick: () -> Unit) {
                     Text(it, style = MaterialTheme.typography.labelMedium, color = Color(0xFF6B7A99))
                 }
             }
-            // Options button — replaces the old close button; End Navigation is behind it
-            IconButton(onClick = onOptionsClick) {
-                Icon(
-                    Icons.Rounded.MoreVert,
-                    contentDescription = "Navigation options",
-                    tint = Color(0xFF6B7A99),
-                )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                IconButton(onClick = onStopClick, modifier = Modifier.size(42.dp)) {
+                    Icon(
+                        Icons.Rounded.Close,
+                        contentDescription = "Stop navigation",
+                        tint = Color(0xFFE2E8F0),
+                    )
+                }
+                IconButton(onClick = onOptionsClick, modifier = Modifier.size(42.dp)) {
+                    Icon(
+                        Icons.Rounded.MoreVert,
+                        contentDescription = "Navigation options",
+                        tint = Color(0xFF6B7A99),
+                    )
+                }
             }
         }
     }
@@ -2166,8 +2187,9 @@ private fun HazardStrip(
                 LookaheadEventType.WEATHER,
             )
         }
+        .sortedBy { it.distanceMeters }
         .distinctBy { it.hazardDedupeKey() }
-        .take(7)
+        .take(3)
     if (upcoming.isEmpty()) return
 
     Surface(
