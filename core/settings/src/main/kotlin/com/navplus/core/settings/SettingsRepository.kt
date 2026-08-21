@@ -137,6 +137,18 @@ class SettingsRepository @Inject constructor(
         private val BORDER_RULES             = booleanPreferencesKey("border_rules")
         // Road personality
         private val SHOW_ROAD_PERSONALITY    = booleanPreferencesKey("show_road_personality")
+        // Real-world feel
+        private val REAL_WORLD_FEEL_ENABLED  = booleanPreferencesKey("real_world_feel_enabled")
+        private val SHOW_VISIBLE_AIRCRAFT    = booleanPreferencesKey("real_world_visible_aircraft")
+        private val SHOW_AIRPORT_APPROACH    = booleanPreferencesKey("real_world_airport_approach")
+        private val SHOW_RAIL_CROSSING       = booleanPreferencesKey("real_world_rail_crossing")
+        private val SHOW_SKY_LIGHT           = booleanPreferencesKey("real_world_sky_light")
+        private val SHOW_SUN_GLARE           = booleanPreferencesKey("real_world_sun_glare")
+        private val SHOW_LANDMARKS           = booleanPreferencesKey("real_world_landmarks")
+        private val SHOW_WATER_BRIDGE        = booleanPreferencesKey("real_world_water_bridge")
+        private val SHOW_WILDLIFE_RISK       = booleanPreferencesKey("real_world_wildlife")
+        private val SHOW_EVENT_CROWD         = booleanPreferencesKey("real_world_event_crowd")
+        private val SHOW_ROAD_FEEL           = booleanPreferencesKey("real_world_road_feel")
         // Voice
         private val VOICE_MODE               = stringPreferencesKey("voice_mode")
         private val VOICE_STREET_NAMES       = booleanPreferencesKey("voice_street_names")
@@ -285,6 +297,17 @@ class SettingsRepository @Inject constructor(
             borderShowTolls             = p[BORDER_TOLLS] ?: true,
             borderShowRules             = p[BORDER_RULES] ?: true,
             showRoadPersonality         = p[SHOW_ROAD_PERSONALITY] ?: true,
+            realWorldFeelEnabled        = p[REAL_WORLD_FEEL_ENABLED] ?: true,
+            showVisibleAircraft         = p[SHOW_VISIBLE_AIRCRAFT] ?: true,
+            showAirportApproach         = p[SHOW_AIRPORT_APPROACH] ?: true,
+            showRailCrossingIntelligence = p[SHOW_RAIL_CROSSING] ?: true,
+            showSkyAndLightReality      = p[SHOW_SKY_LIGHT] ?: true,
+            showSunGlareWarning         = p[SHOW_SUN_GLARE] ?: true,
+            showRoadsideLandmarks       = p[SHOW_LANDMARKS] ?: true,
+            showWaterFerryBridgeMoments = p[SHOW_WATER_BRIDGE] ?: true,
+            showWildlifeRiskAtmosphere  = p[SHOW_WILDLIFE_RISK] ?: true,
+            showEventCrowdPulse         = p[SHOW_EVENT_CROWD] ?: true,
+            showRoadFeelMode            = p[SHOW_ROAD_FEEL] ?: true,
             voiceGuidanceMode           = enumOf<VoiceGuidanceMode>(p[VOICE_MODE]) ?: VoiceGuidanceMode.FULL,
             voiceIncludesStreetNames    = p[VOICE_STREET_NAMES] ?: true,
             voiceIncludesRoadNumbers    = p[VOICE_ROAD_NUMBERS] ?: true,
@@ -420,6 +443,17 @@ class SettingsRepository @Inject constructor(
     suspend fun setBorderShowTolls(v: Boolean)               { dataStore.edit { it[BORDER_TOLLS] = v } }
     suspend fun setBorderShowRules(v: Boolean)               { dataStore.edit { it[BORDER_RULES] = v } }
     suspend fun setShowRoadPersonality(v: Boolean)           { dataStore.edit { it[SHOW_ROAD_PERSONALITY] = v } }
+    suspend fun setRealWorldFeelEnabled(v: Boolean)          { dataStore.edit { it[REAL_WORLD_FEEL_ENABLED] = v } }
+    suspend fun setShowVisibleAircraft(v: Boolean)           { dataStore.edit { it[SHOW_VISIBLE_AIRCRAFT] = v } }
+    suspend fun setShowAirportApproach(v: Boolean)           { dataStore.edit { it[SHOW_AIRPORT_APPROACH] = v } }
+    suspend fun setShowRailCrossingIntelligence(v: Boolean)  { dataStore.edit { it[SHOW_RAIL_CROSSING] = v } }
+    suspend fun setShowSkyAndLightReality(v: Boolean)        { dataStore.edit { it[SHOW_SKY_LIGHT] = v } }
+    suspend fun setShowSunGlareWarning(v: Boolean)           { dataStore.edit { it[SHOW_SUN_GLARE] = v } }
+    suspend fun setShowRoadsideLandmarks(v: Boolean)         { dataStore.edit { it[SHOW_LANDMARKS] = v } }
+    suspend fun setShowWaterFerryBridgeMoments(v: Boolean)   { dataStore.edit { it[SHOW_WATER_BRIDGE] = v } }
+    suspend fun setShowWildlifeRiskAtmosphere(v: Boolean)    { dataStore.edit { it[SHOW_WILDLIFE_RISK] = v } }
+    suspend fun setShowEventCrowdPulse(v: Boolean)           { dataStore.edit { it[SHOW_EVENT_CROWD] = v } }
+    suspend fun setShowRoadFeelMode(v: Boolean)              { dataStore.edit { it[SHOW_ROAD_FEEL] = v } }
     suspend fun setVoiceGuidanceMode(v: VoiceGuidanceMode)   { dataStore.edit { it[VOICE_MODE] = v.name } }
     suspend fun setVoiceIncludesStreetNames(v: Boolean)      { dataStore.edit { it[VOICE_STREET_NAMES] = v } }
     suspend fun setVoiceIncludesRoadNumbers(v: Boolean)      { dataStore.edit { it[VOICE_ROAD_NUMBERS] = v } }

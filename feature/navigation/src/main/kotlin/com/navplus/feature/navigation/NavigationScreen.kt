@@ -54,6 +54,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
@@ -87,6 +89,11 @@ import com.navplus.core.map.ConvoyMapMember
 import com.navplus.core.map.MapRouteLine
 import com.navplus.core.map.MapStyleProvider
 import com.navplus.core.map.NavMapView
+import com.navplus.core.map.RealWorldMapMarker
+import com.navplus.core.navigation.RealWorldCue
+import com.navplus.core.navigation.RealWorldCueType
+import com.navplus.core.navigation.RealWorldFrame
+import com.navplus.core.navigation.RealWorldSky
 import com.navplus.core.navigation.LookaheadEvent
 import com.navplus.core.navigation.LookaheadEventType
 import com.navplus.core.navigation.LookaheadSeverity
@@ -118,6 +125,7 @@ fun NavigationScreen(
     val lookaheadEvents by vm.lookaheadEvents.collectAsStateWithLifecycle()
     val roadCharacters by vm.roadCharacters.collectAsStateWithLifecycle()
     val borderCrossings by vm.borderCrossings.collectAsStateWithLifecycle()
+    val realWorldFrame by vm.realWorldFrame.collectAsStateWithLifecycle()
     val groupSession by vm.groupSession.collectAsStateWithLifecycle()
     val settings by vm.settings.collectAsStateWithLifecycle()
     val trafficFlowTileUrls by vm.trafficFlowTileUrls.collectAsStateWithLifecycle()
@@ -189,6 +197,19 @@ fun NavigationScreen(
     } else {
         emptyList()
     }
+    val realWorldMarkers = if (settings.realWorldFeelEnabled) {
+        realWorldFrame.cues.map { cue ->
+            RealWorldMapMarker(
+                id = cue.id,
+                position = cue.position,
+                icon = cue.icon,
+                color = cue.color,
+                priority = cue.priority,
+            )
+        }
+    } else {
+        emptyList()
+    }
 
     Box(Modifier.fillMaxSize()) {
         NavMapView(
@@ -204,11 +225,18 @@ fun NavigationScreen(
             selectedRouteId = readyState?.selectedRouteId,
             cameras = routeCameraMarkers,
             convoyMembers = convoyMapMembers,
+            realWorldMarkers = realWorldMarkers,
             trafficFlowTileUrls = trafficFlowTileUrls,
             onRouteTap = if (readyState != null) vm::selectRoute else null,
             vehicleType = settings.vehicleType,
             userPosition = mapCenter,
             userBearing = bearing,
+        )
+
+        RealWorldAtmosphereOverlay(
+            frame = realWorldFrame,
+            enabled = settings.realWorldFeelEnabled,
+            reduceMotion = settings.reduceMotion,
         )
 
         when (routingUiState) {
@@ -237,6 +265,7 @@ fun NavigationScreen(
                     lookaheadEvents = lookaheadEvents,
                     roadCharacters = roadCharacters,
                     borderCrossings = borderCrossings,
+                    realWorldFrame = realWorldFrame,
                     groupSession = groupSession,
                     currentSpeedKph = location?.speedKph ?: 0f,
                     settings = settings,
@@ -278,6 +307,7 @@ private fun NavigationHud(
     lookaheadEvents: List<LookaheadEvent>,
     roadCharacters: List<RoadCharacter>,
     borderCrossings: List<BorderCrossing>,
+    realWorldFrame: RealWorldFrame,
     groupSession: GroupSession?,
     currentSpeedKph: Float,
     settings: UserSettings,
@@ -299,13 +329,19 @@ private fun NavigationHud(
 
         CurrentDrivingContextBadges(progress = progress)
 
-        Spacer(Modifier.weight(1f))
-
-        if (settings.showBorderAlerts) borderCrossings.firstOrNull()?.let { BorderPrepBanner(it) }
-
         val activeSafetyAlert = if (settings.safetyFeaturesEnabled && settings.showSpeedCameras) alerts.firstOrNull() else null
         val activeTrafficSignal = lookaheadEvents.visibleWith(settings)
             .firstOrNull { it.type == LookaheadEventType.TRAFFIC_SIGNAL }
+
+        RealWorldCueStrip(
+            realWorldFrame = realWorldFrame,
+            settings = settings,
+            suppressed = activeSafetyAlert != null || activeTrafficSignal != null,
+        )
+
+        Spacer(Modifier.weight(1f))
+
+        if (settings.showBorderAlerts) borderCrossings.firstOrNull()?.let { BorderPrepBanner(it) }
 
         NextDrivingAlert(
             alert = activeSafetyAlert,
@@ -328,6 +364,143 @@ private fun NavigationHud(
         }
 
         BottomInfoBar(progress, currentSpeedKph, settings)
+    }
+}
+
+@Composable
+private fun RealWorldAtmosphereOverlay(
+    frame: RealWorldFrame,
+    enabled: Boolean,
+    reduceMotion: Boolean,
+) {
+    if (!enabled || frame == RealWorldFrame.Empty) return
+    val atmosphere = frame.atmosphere
+    val baseColor = atmosphere.routePulseColor.toComposeColor()
+    val alpha = (atmosphere.intensity * 0.14f).coerceIn(0.02f, 0.10f)
+    Canvas(
+        modifier = Modifier
+            .fillMaxSize()
+            .semantics { contentDescription = "Real-world ambient driving layer" },
+    ) {
+        drawRect(
+            brush = Brush.verticalGradient(
+                colors = listOf(
+                    baseColor.copy(alpha = alpha),
+                    Color.Transparent,
+                    baseColor.copy(alpha = alpha * 0.45f),
+                ),
+            )
+        )
+        if (reduceMotion) return@Canvas
+        when (atmosphere.sky) {
+            RealWorldSky.RAIN -> {
+                repeat(18) { index ->
+                    val x = size.width * ((index * 37 % 100) / 100f)
+                    val y = size.height * ((index * 53 % 100) / 100f)
+                    drawLine(
+                        color = Color(0xFFBAE6FD).copy(alpha = 0.18f),
+                        start = Offset(x, y),
+                        end = Offset(x + 8f, y + 28f),
+                        strokeWidth = 2f,
+                        cap = StrokeCap.Round,
+                    )
+                }
+            }
+            RealWorldSky.SNOW -> {
+                repeat(15) { index ->
+                    val x = size.width * ((index * 29 % 100) / 100f)
+                    val y = size.height * ((index * 47 % 100) / 100f)
+                    drawCircle(Color.White.copy(alpha = 0.20f), radius = 2.4f, center = Offset(x, y))
+                }
+            }
+            RealWorldSky.FOG -> {
+                repeat(4) { index ->
+                    val y = size.height * (0.24f + index * 0.14f)
+                    drawLine(
+                        color = Color(0xFFE2E8F0).copy(alpha = 0.10f),
+                        start = Offset(size.width * 0.08f, y),
+                        end = Offset(size.width * 0.92f, y),
+                        strokeWidth = 6f,
+                        cap = StrokeCap.Round,
+                    )
+                }
+            }
+            RealWorldSky.SUNSET -> {
+                drawCircle(
+                    color = Color(0xFFF97316).copy(alpha = 0.10f),
+                    radius = size.minDimension * 0.22f,
+                    center = Offset(size.width * 0.78f, size.height * 0.20f),
+                )
+            }
+            else -> Unit
+        }
+    }
+}
+
+@Composable
+private fun RealWorldCueStrip(
+    realWorldFrame: RealWorldFrame,
+    settings: UserSettings,
+    suppressed: Boolean,
+) {
+    if (suppressed || !settings.realWorldFeelEnabled || realWorldFrame.cues.isEmpty()) return
+    val cues = realWorldFrame.cues
+        .filter { it.type != RealWorldCueType.SKY_LIGHT || settings.showSkyAndLightReality }
+        .take(3)
+    if (cues.isEmpty()) return
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 3.dp),
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        cues.forEach { cue ->
+            RealWorldCueChip(cue)
+        }
+    }
+}
+
+@Composable
+private fun RealWorldCueChip(cue: RealWorldCue) {
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        color = Color(0xFF101827).copy(alpha = 0.78f),
+        tonalElevation = 0.dp,
+        shadowElevation = 0.dp,
+    ) {
+        Row(
+            modifier = Modifier
+                .height(38.dp)
+                .padding(start = 8.dp, end = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(22.dp)
+                    .background(cue.color.toComposeColor().copy(alpha = 0.86f), CircleShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(cue.icon, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.width(7.dp))
+            Column(verticalArrangement = Arrangement.Center) {
+                Text(
+                    cue.title,
+                    color = Color.White,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    formatDistance(cue.distanceMeters),
+                    color = Color(0xFFCBD5E1),
+                    fontSize = 10.sp,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
@@ -514,6 +687,9 @@ private fun QuickOptionsSheet(
 }
 
 private data class QuickOption(val emoji: String, val label: String)
+
+private fun String.toComposeColor(): Color =
+    runCatching { Color(android.graphics.Color.parseColor(this)) }.getOrDefault(Color(0xFF3B82F6))
 
 @Composable
 private fun QuickOptionButton(

@@ -287,6 +287,19 @@ data class UserSettings(
     // ── Road personality ──────────────────────────────────────────────────────
     val showRoadPersonality: Boolean = true,
 
+    // ── Real-world feel ───────────────────────────────────────────────────────
+    val realWorldFeelEnabled: Boolean = true,
+    val showVisibleAircraft: Boolean = true,
+    val showAirportApproach: Boolean = true,
+    val showRailCrossingIntelligence: Boolean = true,
+    val showSkyAndLightReality: Boolean = true,
+    val showSunGlareWarning: Boolean = true,
+    val showRoadsideLandmarks: Boolean = true,
+    val showWaterFerryBridgeMoments: Boolean = true,
+    val showWildlifeRiskAtmosphere: Boolean = true,
+    val showEventCrowdPulse: Boolean = true,
+    val showRoadFeelMode: Boolean = true,
+
     // ── Voice & alerts ────────────────────────────────────────────────────────
     val voiceGuidanceMode: VoiceGuidanceMode = VoiceGuidanceMode.FULL,
     val voiceIncludesStreetNames: Boolean = true,

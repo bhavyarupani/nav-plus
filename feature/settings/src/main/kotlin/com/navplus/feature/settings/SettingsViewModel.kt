@@ -149,6 +149,19 @@ class SettingsViewModel @Inject constructor(
     // Road personality
     fun setShowRoadPersonality(v: Boolean)           = launch { repo.setShowRoadPersonality(v) }
 
+    // Real-world feel
+    fun setRealWorldFeelEnabled(v: Boolean)          = launch { repo.setRealWorldFeelEnabled(v) }
+    fun setShowVisibleAircraft(v: Boolean)           = launch { repo.setShowVisibleAircraft(v) }
+    fun setShowAirportApproach(v: Boolean)           = launch { repo.setShowAirportApproach(v) }
+    fun setShowRailCrossingIntelligence(v: Boolean)  = launch { repo.setShowRailCrossingIntelligence(v) }
+    fun setShowSkyAndLightReality(v: Boolean)        = launch { repo.setShowSkyAndLightReality(v) }
+    fun setShowSunGlareWarning(v: Boolean)           = launch { repo.setShowSunGlareWarning(v) }
+    fun setShowRoadsideLandmarks(v: Boolean)         = launch { repo.setShowRoadsideLandmarks(v) }
+    fun setShowWaterFerryBridgeMoments(v: Boolean)   = launch { repo.setShowWaterFerryBridgeMoments(v) }
+    fun setShowWildlifeRiskAtmosphere(v: Boolean)    = launch { repo.setShowWildlifeRiskAtmosphere(v) }
+    fun setShowEventCrowdPulse(v: Boolean)           = launch { repo.setShowEventCrowdPulse(v) }
+    fun setShowRoadFeelMode(v: Boolean)              = launch { repo.setShowRoadFeelMode(v) }
+
     // Voice
     fun setVoiceGuidanceMode(v: VoiceGuidanceMode)   = launch { repo.setVoiceGuidanceMode(v) }
     fun setVoiceIncludesStreetNames(v: Boolean)      = launch { repo.setVoiceIncludesStreetNames(v) }

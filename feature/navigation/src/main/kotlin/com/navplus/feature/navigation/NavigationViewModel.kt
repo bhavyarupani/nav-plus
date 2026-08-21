@@ -19,6 +19,9 @@ import com.navplus.core.navigation.LookaheadEvent
 import com.navplus.core.navigation.LocationTracker
 import com.navplus.core.navigation.NavigationEngine
 import com.navplus.core.navigation.NavigationState
+import com.navplus.core.navigation.RealWorldEngine
+import com.navplus.core.navigation.RealWorldFrame
+import com.navplus.core.navigation.RealWorldOptions
 import com.navplus.core.navigation.RoadCharacter
 import com.navplus.core.navigation.RoadCharacterAnalyzer
 import com.navplus.core.navigation.RoadScenarioSimulator
@@ -100,6 +103,7 @@ class NavigationViewModel @Inject constructor(
     private val groupSyncService: GroupSyncService,
     private val settingsRepository: SettingsRepository,
     private val roadScenarioSimulator: RoadScenarioSimulator,
+    private val realWorldEngine: RealWorldEngine,
     private val speedCameraRepository: SpeedCameraRepository,
     private val overpassCameraFetcher: OverpassCameraFetcher,
     private val speedCameraAssetSeeder: SpeedCameraAssetSeeder,
@@ -127,6 +131,9 @@ class NavigationViewModel @Inject constructor(
 
     private val _borderCrossings = MutableStateFlow<List<BorderCrossing>>(emptyList())
     val borderCrossings: StateFlow<List<BorderCrossing>> = _borderCrossings.asStateFlow()
+
+    private val _realWorldFrame = MutableStateFlow(RealWorldFrame.Empty)
+    val realWorldFrame: StateFlow<RealWorldFrame> = _realWorldFrame.asStateFlow()
 
     val groupSession: StateFlow<GroupSession?> = groupSyncService.session
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -182,6 +189,15 @@ class NavigationViewModel @Inject constructor(
                         distanceRemainingMeters = progress.distanceRemainingMeters,
                         hasDeviated = progress.isOffRoute,
                     )
+                    val distFromStart = progress.route.distanceMeters - progress.distanceRemainingMeters
+                    _realWorldFrame.value = realWorldEngine.frameAhead(
+                        route = progress.route,
+                        currentPosition = progress.snappedLocation,
+                        headingDeg = progress.routeBearingDeg,
+                        distanceFromStartMeters = distFromStart,
+                        currentSpeedKph = location.speedKph,
+                        options = settings.value.toRealWorldOptions(),
+                    )
                 }
             }
         }
@@ -198,10 +214,19 @@ class NavigationViewModel @Inject constructor(
                     )
                     _roadCharacters.value = roadCharacterAnalyzer.analyzeAhead(route, state.progress.currentStepIndex)
                     _borderCrossings.value = borderCrossingDetector.detectCrossings(route, distFromStart)
+                    _realWorldFrame.value = realWorldEngine.frameAhead(
+                        route = route,
+                        currentPosition = state.progress.snappedLocation,
+                        headingDeg = state.progress.routeBearingDeg,
+                        distanceFromStartMeters = distFromStart,
+                        currentSpeedKph = _currentLocation.value?.speedKph,
+                        options = settings.value.toRealWorldOptions(),
+                    )
                 } else {
                     _lookaheadEvents.value = emptyList()
                     _roadCharacters.value = emptyList()
                     _borderCrossings.value = emptyList()
+                    _realWorldFrame.value = RealWorldFrame.Empty
                 }
             }
         }
@@ -584,3 +609,17 @@ class NavigationViewModel @Inject constructor(
         _routingUiState.value = RoutingUiState.Idle
     }
 }
+
+private fun UserSettings.toRealWorldOptions(): RealWorldOptions = RealWorldOptions(
+    enabled = realWorldFeelEnabled,
+    visibleAircraft = showVisibleAircraft,
+    airportApproach = showAirportApproach,
+    railCrossing = showRailCrossingIntelligence,
+    skyAndLight = showSkyAndLightReality,
+    sunGlare = showSunGlareWarning,
+    landmarkGlance = showRoadsideLandmarks,
+    waterFerryBridge = showWaterFerryBridgeMoments,
+    wildlifeRisk = showWildlifeRiskAtmosphere,
+    eventCrowd = showEventCrowdPulse,
+    roadFeel = showRoadFeelMode,
+)

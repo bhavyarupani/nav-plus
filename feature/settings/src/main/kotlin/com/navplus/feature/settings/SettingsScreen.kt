@@ -40,6 +40,7 @@ private sealed class SettingsPage(val title: String) {
     object SafetyCameras : SettingsPage("Safety & Cameras")
     object TrafficRoadAhead : SettingsPage("Traffic & Road Ahead")
     object TrafficSignals : SettingsPage("Traffic Signals")
+    object RealWorldFeel : SettingsPage("Real-World Feel")
     object LaneGuidanceSigns : SettingsPage("Lane Guidance & Signs")
     object SmartStops : SettingsPage("Smart Stops")
     object Fuel : SettingsPage("Fuel")
@@ -103,6 +104,7 @@ fun SettingsScreen(
                 is SettingsPage.SafetyCameras -> SafetyCamerasPage(settings, vm)
                 is SettingsPage.TrafficRoadAhead -> TrafficRoadAheadPage(settings, vm)
                 is SettingsPage.TrafficSignals -> TrafficSignalsPage(settings, vm)
+                is SettingsPage.RealWorldFeel -> RealWorldFeelPage(settings, vm)
                 is SettingsPage.LaneGuidanceSigns -> LaneGuidanceSignsPage(settings, vm)
                 is SettingsPage.SmartStops -> SmartStopsPage(settings, vm)
                 is SettingsPage.Fuel -> FuelPage(settings, vm)
@@ -139,6 +141,7 @@ private fun MainSettingsPage(
         CategoryItem("📷", "Safety & Cameras", "Cameras, speed alerts, school zones", SettingsPage.SafetyCameras),
         CategoryItem("🚗", "Traffic & Road Ahead", "Traffic layer, alerts, road ahead panel", SettingsPage.TrafficRoadAhead),
         CategoryItem("🚦", "Traffic Signals", "Signal intelligence, GLOSA, timing", SettingsPage.TrafficSignals),
+        CategoryItem("◐", "Real-World Feel", "Sky, aircraft, rail, landmarks and road mood", SettingsPage.RealWorldFeel),
         CategoryItem("🛤", "Lane Guidance & Signs", "Lanes, signboards, exit numbers", SettingsPage.LaneGuidanceSigns),
         CategoryItem("⛽", "Smart Stops", "Fuel and shop quick actions", SettingsPage.SmartStops),
         CategoryItem("🛢", "Fuel", "Fuel type, preferences, detour limit", SettingsPage.Fuel),
@@ -532,6 +535,39 @@ private fun TrafficSignalsPage(settings: UserSettings, vm: SettingsViewModel) {
                 onCheckedChange = vm::setShowGlosa,
             )
         }
+        item { Spacer(Modifier.height(32.dp)) }
+    }
+}
+
+// ── Real-World Feel ──────────────────────────────────────────────────────────
+
+@Composable
+private fun RealWorldFeelPage(settings: UserSettings, vm: SettingsViewModel) {
+    LazyColumn(Modifier.fillMaxSize()) {
+        item {
+            MasterToggleRow(
+                label = "Real-world feel",
+                description = "Ambient live-world cues while keeping navigation clear",
+                checked = settings.realWorldFeelEnabled,
+                onCheckedChange = vm::setRealWorldFeelEnabled,
+            )
+        }
+        item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+        item { SectionLabel("Sky & motion") }
+        item { ToggleRow("Visible aircraft", "Show aircraft only when plausible through windshield or side windows", settings.showVisibleAircraft, vm::setShowVisibleAircraft) }
+        item { ToggleRow("Airport approach", "Show subtle runway approach/departure context near airports", settings.showAirportApproach, vm::setShowAirportApproach) }
+        item { ToggleRow("Sky and light", "Match the map mood to rain, fog, snow, sunset and night", settings.showSkyAndLightReality, vm::setShowSkyAndLightReality) }
+        item { ToggleRow("Sun glare", "Warn when low sun is in the windshield or side-window direction", settings.showSunGlareWarning, vm::setShowSunGlareWarning) }
+        item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+        item { SectionLabel("Places ahead") }
+        item { ToggleRow("Rail crossing intelligence", "Check route ETA against nearby train movement when available", settings.showRailCrossingIntelligence, vm::setShowRailCrossingIntelligence) }
+        item { ToggleRow("Roadside landmarks", "Show visible landmarks only in calm driving moments", settings.showRoadsideLandmarks, vm::setShowRoadsideLandmarks) }
+        item { ToggleRow("Water, ferry and bridge moments", "Show rivers, bridge context and ferry timing when relevant", settings.showWaterFerryBridgeMoments, vm::setShowWaterFerryBridgeMoments) }
+        item { ToggleRow("Event crowd pulse", "Show crowd/exit traffic zones near venues, stations and airports", settings.showEventCrowdPulse, vm::setShowEventCrowdPulse) }
+        item { HorizontalDivider(Modifier.padding(vertical = 8.dp)) }
+        item { SectionLabel("Road feel") }
+        item { ToggleRow("Wildlife risk", "Subtle rural dusk/night caution when risk is meaningful", settings.showWildlifeRiskAtmosphere, vm::setShowWildlifeRiskAtmosphere) }
+        item { ToggleRow("Road feel mode", "Reflect tunnel, bridge, forest, mountain, city and open-road context", settings.showRoadFeelMode, vm::setShowRoadFeelMode) }
         item { Spacer(Modifier.height(32.dp)) }
     }
 }

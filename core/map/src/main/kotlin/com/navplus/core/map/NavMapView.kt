@@ -75,6 +75,9 @@ private const val VEHICLE_IMAGE_ID      = "navplus-user-vehicle-image"
 private const val CONVOY_SOURCE_ID      = "navplus-convoy-members"
 private const val CONVOY_CIRCLE_ID      = "navplus-convoy-members-circle"
 private const val CONVOY_ARROW_ID       = "navplus-convoy-members-arrow"
+private const val REAL_WORLD_SOURCE_ID  = "navplus-real-world"
+private const val REAL_WORLD_CIRCLE_ID  = "navplus-real-world-circle"
+private const val REAL_WORLD_TEXT_ID    = "navplus-real-world-text"
 
 // Marker glide. The span is measured from the gap between the last two fixes, so
 // the marker keeps moving for exactly as long as it takes the next one to arrive.
@@ -100,6 +103,7 @@ fun NavMapView(
     selectedRouteId: String? = null,
     cameras: List<CameraMarker> = emptyList(),
     convoyMembers: List<ConvoyMapMember> = emptyList(),
+    realWorldMarkers: List<RealWorldMapMarker> = emptyList(),
     trafficFlowTileUrls: List<String> = emptyList(),
     onCameraIdle: ((minLat: Double, maxLat: Double, minLng: Double, maxLng: Double) -> Unit)? = null,
     onCameraTap: ((CameraMarker) -> Unit)? = null,
@@ -224,6 +228,12 @@ fun NavMapView(
         updateConvoyLayer(map, convoyMembers)
     }
 
+    // Real-world ambient markers — intentionally subtle and zoom-gated.
+    LaunchedEffect(mapRef, styleTick, realWorldMarkers) {
+        val map = mapRef ?: return@LaunchedEffect
+        updateRealWorldLayer(map, realWorldMarkers)
+    }
+
     // Optional marker tap handling. Used on the normal map for camera source/debug details;
     // navigation deliberately does not pass a callback, so active driving stays uncluttered.
     DisposableEffect(mapRef, density) {
@@ -282,6 +292,7 @@ fun NavMapView(
         if (resumeSignal == 0) return@LaunchedEffect
         updateCameraLayer(map, cameras)
         updateConvoyLayer(map, convoyMembers)
+        updateRealWorldLayer(map, realWorldMarkers)
         updateRouteLayer(map, if (routeAlternatives.isEmpty()) routeGeometry else null)
         updateRouteAlternativesLayer(map, routeAlternatives, selectedRouteId)
         if (vehicleType != null) registerVehicleIcon(map, context, vehicleType, density)
@@ -689,8 +700,75 @@ private fun updateConvoyLayer(map: MapLibreMap, members: List<ConvoyMapMember>) 
     }
 }
 
+private fun updateRealWorldLayer(map: MapLibreMap, markers: List<RealWorldMapMarker>) {
+    val style = map.style ?: return
+    try {
+        if (style.getLayer(REAL_WORLD_TEXT_ID) != null) style.removeLayer(REAL_WORLD_TEXT_ID)
+        if (style.getLayer(REAL_WORLD_CIRCLE_ID) != null) style.removeLayer(REAL_WORLD_CIRCLE_ID)
+        if (style.getSource(REAL_WORLD_SOURCE_ID) != null) style.removeSource(REAL_WORLD_SOURCE_ID)
+    } catch (e: Exception) {
+        Log.e("NavMapView", "remove real-world layer/source failed: $e")
+        return
+    }
+    if (markers.isEmpty()) return
+
+    val features = markers
+        .sortedByDescending { it.priority }
+        .take(8)
+        .joinToString(",") { marker ->
+            val color = safeHexColor(marker.color)
+            """{"type":"Feature","properties":{"id":"${marker.id.jsonEscape()}","icon":"${marker.icon.jsonEscape()}","color":"$color","priority":${marker.priority}},""" +
+                """"geometry":{"type":"Point","coordinates":[${marker.position.lng},${marker.position.lat}]}}"""
+        }
+    val geoJson = """{"type":"FeatureCollection","features":[$features]}"""
+    try {
+        style.addSource(GeoJsonSource(REAL_WORLD_SOURCE_ID, geoJson))
+        style.addLayer(CircleLayer(REAL_WORLD_CIRCLE_ID, REAL_WORLD_SOURCE_ID).withProperties(
+            PropertyFactory.circleRadius(
+                Expression.interpolate(
+                    Expression.linear(), Expression.zoom(),
+                    Expression.stop(10.0, 6f),
+                    Expression.stop(14.0, 8f),
+                    Expression.stop(16.0, 10f),
+                    Expression.stop(18.0, 12f),
+                )
+            ),
+            PropertyFactory.circleColor(Expression.toColor(Expression.get("color"))),
+            PropertyFactory.circleStrokeColor(AndroidColor.WHITE),
+            PropertyFactory.circleStrokeWidth(1.4f),
+            PropertyFactory.circleOpacity(0.72f),
+        ).apply {
+            setMinZoom(10f)
+        })
+        style.addLayerAbove(SymbolLayer(REAL_WORLD_TEXT_ID, REAL_WORLD_SOURCE_ID).withProperties(
+            PropertyFactory.textField(Expression.get("icon")),
+            PropertyFactory.textSize(
+                Expression.interpolate(
+                    Expression.linear(), Expression.zoom(),
+                    Expression.stop(10.0, 10f),
+                    Expression.stop(14.0, 12f),
+                    Expression.stop(16.0, 14f),
+                    Expression.stop(18.0, 16f),
+                )
+            ),
+            PropertyFactory.textColor(AndroidColor.WHITE),
+            PropertyFactory.textHaloColor(AndroidColor.BLACK),
+            PropertyFactory.textHaloWidth(0.8f),
+            PropertyFactory.textAllowOverlap(false),
+            PropertyFactory.textIgnorePlacement(false),
+        ).apply {
+            setMinZoom(11f)
+        }, REAL_WORLD_CIRCLE_ID)
+    } catch (e: Exception) {
+        Log.e("NavMapView", "add real-world layer/source failed: $e")
+    }
+}
+
 private fun safeHexColor(value: String): String =
     value.takeIf { Regex("^#[0-9A-Fa-f]{6}$").matches(it) } ?: "#22C55E"
+
+private fun String.jsonEscape(): String =
+    replace("\\", "\\\\").replace("\"", "\\\"")
 
 private fun cameraAtClick(
     map: MapLibreMap,
